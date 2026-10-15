@@ -1,0 +1,759 @@
+// Make a project recoverable before something rewrites it.
+//
+// Written after a harness test matrix was pointed at /Users/warrenwhite/TronGame
+// and the project turned out not to be under version control at all. Several of
+// those tests exist specifically to produce bad output — a truncated script, a
+// half-built scene, a fidelity level that leaves placeholders behind — and
+// `/fix revert` does not help, because it only restores files a /fix run itself
+// modified. A model writing a broken file outside that flow leaves nothing to
+// go back to.
+//
+// So this is not a git wrapper and deliberately does not try to be one. It
+// answers one question — "can I undo what is about to happen here?" — and if
+// the answer is no, it makes the answer yes. Everything else (branching,
+// pushing, history) stays the user's business in their own terminal.
+//
+// `ensureBaseline` is the first-time case. `snapshot` and `undoToSnapshot` are
+// the loop: twelve tests, each one run, judged, then thrown away. The reason
+// they exist as commands rather than as advice in a README is that the obvious
+// hand-written version is wrong in a way that is invisible until it costs you
+// something:
+//
+//   • `reset --hard <sha>` pins the undo to ONE baseline, so the third test
+//     also discards the first two.
+//   • `reset --hard` alone leaves files the model CREATED, because untracked
+//     files were never git's to discard. Half the test output survives an
+//     "undo" that reports success.
+//   • `git clean -fd` is the usual fix for that, and on a Unity project it is a
+//     loaded gun. Dry-run against TronGame it offered to delete five of the
+//     user's own directories — `Assets/Prefabs 1/`, `Assets/Scenes/DiscBattle/`
+//     and three more — because they are EMPTY, git cannot track an empty
+//     directory, and so `add -A` never committed them and `clean` reads them as
+//     junk. Nothing here runs `clean`: snapshotting first means new files are
+//     tracked, so `reset --hard` removes them properly and empty directories
+//     are never in play.
+//
+// Two rules shape the whole file:
+//
+//   1. NEVER TOUCH AN EXISTING REPOSITORY WITHOUT BEING ASKED. `ensureBaseline`
+//      reports and stops when the directory is already a work tree; committing
+//      on someone's behalf into history they are mid-way through curating is
+//      worse than the problem being solved. `snapshot` and `undoToSnapshot` DO
+//      write, because that is what they were called to do — but they refuse to
+//      discard commits they did not make, and they refuse to run on Cullus's
+//      own source at all.
+//
+//   2. A UNITY PROJECT WITHOUT .gitignore IS A TRAP, NOT A BASELINE. `Library/`
+//      alone is commonly several gigabytes of regenerable import cache, and a
+//      first commit that swallows it produces a repository so slow that the
+//      user stops using it — which lands them back at no version control, only
+//      now with a .git directory implying otherwise. Measured on TronGame:
+//      Library/ 2.5 GB against Assets/ 7.3 MB — a first commit without an
+//      ignore file would be 340x the size of the thing worth keeping.
+
+import * as fs from "fs";
+import * as path from "path";
+import { execFileSync } from "child_process";
+import { resolveTarget, listFixTargets } from "./projectTarget.js";
+
+export interface GitState {
+  root: string;
+  label: string;
+  /** Is this directory inside a git work tree? */
+  repo: boolean;
+  /** Current branch, when there is one. A repo with no commits has none. */
+  branch?: string;
+  /** Number of commits reachable from HEAD. 0 for a freshly-initialised repo. */
+  commits?: number;
+  /** Paths with uncommitted changes, capped for display. */
+  dirty?: string[];
+  dirtyCount?: number;
+  /** Set when the work tree's root is ABOVE the directory asked about. */
+  repoRoot?: string;
+  /** True when a Unity project marker is present. */
+  unity?: boolean;
+  /** True when a .gitignore exists at the repository root. */
+  hasGitignore?: boolean;
+  /**
+   * True when this IS Cullus's own project root.
+   *
+   * Carried on the state rather than re-derived by each caller, so that the
+   * "never hard-reset yourself" guard cannot be accidentally skipped by a
+   * caller that forgot to ask.
+   */
+  isSelf?: boolean;
+}
+
+/** Run git in `cwd`, returning trimmed stdout, or null when it fails. */
+function git(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 16 * 1024 * 1024,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function isUnityProject(root: string): boolean {
+  return fs.existsSync(path.join(root, "ProjectSettings", "ProjectVersion.txt"));
+}
+
+/**
+ * Unity's own recommended ignore set, plus the two that bite hardest here.
+ *
+ * `Library/` and `Temp/` are the expensive ones: both are regenerated by the
+ * editor on open and neither belongs in history. `*.csproj`/`*.sln` are
+ * regenerated too and are a constant source of noise diffs. `.DS_Store` is here
+ * because this is a Mac and it is already scattered through the project.
+ *
+ * Kept as a literal rather than fetched: a baseline commit that depends on the
+ * network is a baseline that fails when you most want it.
+ */
+const UNITY_GITIGNORE = `# Unity generated — regenerated by the editor, never commit
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Asset meta data should only be ignored when the corresponding asset is also ignored
+!/[Aa]ssets/**/*.meta
+
+# Visual Studio / Rider / VS Code generated
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity3D build artifacts
+sysinfo.txt
+*.apk
+*.aab
+*.unitypackage
+*.app
+crashlytics-build.properties
+
+# macOS
+.DS_Store
+`;
+
+const GENERIC_GITIGNORE = `node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+`;
+
+/**
+ * Read the git state of a directory without changing anything.
+ *
+ * Separate from `ensureBaseline` on purpose: the UI shows this for every
+ * granted path before the user decides to act on any of them, and a status
+ * call that could write would make that listing dangerous.
+ */
+export function gitState(requested: string | null | undefined): GitState | { error: string; actionRequired: string } {
+  const granted = resolveTarget(requested);
+  if (!granted.ok) return { error: granted.error, actionRequired: granted.actionRequired };
+
+  const root = granted.target.root;
+  const state: GitState = {
+    root,
+    label: granted.target.label,
+    repo: false,
+    unity: isUnityProject(root),
+    isSelf: granted.target.isSelf,
+  };
+
+  if (git(root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return state;
+
+  state.repo = true;
+
+  // A directory can be inside a repository rooted well above it — a Unity
+  // project sitting in a monorepo, say. Saying "already a repo" without saying
+  // WHICH repo would be true and useless.
+  const repoRoot = git(root, ["rev-parse", "--show-toplevel"]);
+  if (repoRoot && path.resolve(repoRoot) !== root) state.repoRoot = path.resolve(repoRoot);
+
+  const effectiveRoot = state.repoRoot ?? root;
+  state.hasGitignore = fs.existsSync(path.join(effectiveRoot, ".gitignore"));
+
+  // `--abbrev-ref HEAD` prints "HEAD" on a repo with no commits yet, which is
+  // not a branch name. Reported as absent rather than as a branch called HEAD.
+  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (branch && branch !== "HEAD") state.branch = branch;
+
+  const count = git(root, ["rev-list", "--count", "HEAD"]);
+  state.commits = count === null ? 0 : Number(count) || 0;
+
+  const status = git(root, ["status", "--porcelain"]);
+  if (status !== null) {
+    const lines = status.split("\n").filter((line) => line.trim().length > 0);
+    state.dirtyCount = lines.length;
+    state.dirty = lines.slice(0, 10).map((line) => line.trim());
+  }
+
+  return state;
+}
+
+export interface BaselineResult {
+  root: string;
+  /** What was actually done, for the user to read. */
+  action: "already-a-repo" | "initialised" | "committed-baseline";
+  message: string;
+  /** Written only when there was no .gitignore and one was needed. */
+  wroteGitignore?: boolean;
+  branch?: string;
+  commit?: string;
+  filesCommitted?: number;
+  /** Present when nothing was changed and the caller should say why. */
+  warning?: string;
+}
+
+/**
+ * Guarantee there is something to go back to.
+ *
+ * Order matters and is the whole design: .gitignore is written BEFORE the first
+ * `git add`, because `add -A` on a Unity project with no ignore file stages
+ * Library/ and there is no cheap way back from that — the blobs are in the
+ * object store whether or not you later remove the files.
+ */
+export function ensureBaseline(
+  requested: string | null | undefined
+): BaselineResult | { error: string; actionRequired: string } {
+  const state = gitState(requested);
+  if ("error" in state) return state;
+
+  const root = state.root;
+
+  if (git(root, ["--version"]) === null) {
+    return {
+      error: "git is not available on this machine.",
+      actionRequired: "Install the Xcode command line tools with `xcode-select --install`.",
+    };
+  }
+
+  // Rule 1. Report and stop.
+  if (state.repo) {
+    const where = state.repoRoot ? ` (the work tree is rooted at ${state.repoRoot})` : "";
+    const dirty = state.dirtyCount
+      ? ` ${state.dirtyCount} uncommitted change(s) — commit or stash them before a destructive run, because this will not do it for you.`
+      : " The work tree is clean.";
+
+    return {
+      root,
+      action: "already-a-repo",
+      branch: state.branch,
+      filesCommitted: undefined,
+      message:
+        `${root} is already under version control${where}, on ` +
+        `${state.branch ? `branch ${state.branch}` : "no branch yet"} with ` +
+        `${state.commits ?? 0} commit(s).${dirty}`,
+      ...(state.dirtyCount && state.dirtyCount > 0
+        ? { warning: `${state.dirtyCount} uncommitted change(s) are not protected by anything.` }
+        : {}),
+      ...(state.unity && !state.hasGitignore
+        ? {
+            warning:
+              "This is a Unity project with no .gitignore, so Library/ and Temp/ are tracked or " +
+              "untracked-and-noisy. Nothing was changed — add one yourself before the next commit.",
+          }
+        : {}),
+    };
+  }
+
+  // Rule 2. The ignore file comes first, or the baseline is worthless.
+  const gitignorePath = path.join(root, ".gitignore");
+  let wroteGitignore = false;
+
+  if (!fs.existsSync(gitignorePath)) {
+    try {
+      fs.writeFileSync(gitignorePath, state.unity ? UNITY_GITIGNORE : GENERIC_GITIGNORE, "utf-8");
+      wroteGitignore = true;
+    } catch (err: any) {
+      return {
+        error: `Could not write ${gitignorePath}: ${err?.message ?? err}`,
+        actionRequired:
+          "Check the directory is writable. Without a .gitignore the first commit would " +
+          "swallow Library/, so no repository was created.",
+      };
+    }
+  }
+
+  if (git(root, ["init"]) === null) {
+    return {
+      error: `git init failed in ${root}.`,
+      actionRequired: `Run \`git init\` in ${root} by hand to see what git says.`,
+    };
+  }
+
+  if (git(root, ["add", "-A"]) === null) {
+    return {
+      error: `git add failed in ${root}.`,
+      actionRequired:
+        `The repository exists but nothing is staged. Run \`git add -A && git commit -m baseline\` ` +
+        `in ${root} to finish it.`,
+    };
+  }
+
+  // Count before committing: `diff --cached --name-only` is the staged set, and
+  // after the commit there is nothing cached to count.
+  const staged = git(root, ["diff", "--cached", "--name-only"]);
+  const filesCommitted = staged ? staged.split("\n").filter((l) => l.trim()).length : 0;
+
+  if (filesCommitted === 0) {
+    return {
+      root,
+      action: "initialised",
+      wroteGitignore,
+      message:
+        `Initialised an empty repository in ${root}, but there was nothing to commit — ` +
+        `every file present is covered by .gitignore.`,
+      warning: "There is no baseline commit, so there is still nothing to revert to.",
+    };
+  }
+
+  // `-c` rather than `config`: this sets the identity for this one commit
+  // without writing into the user's global or local git config. A tool that
+  // silently changes who you are in a repository is not a tool anyone asked for.
+  const committed = git(root, [
+    "-c",
+    "user.name=Cullus",
+    "-c",
+    "user.email=cullus@localhost",
+    "commit",
+    "-m",
+    "Baseline before automated changes",
+    "--no-verify",
+  ]);
+
+  if (committed === null) {
+    return {
+      error: `git commit failed in ${root}.`,
+      actionRequired:
+        `The repository and the staged files exist. Run \`git commit -m baseline\` in ${root} ` +
+        `to see why — usually an unset user.name, though this passes one explicitly.`,
+    };
+  }
+
+  const sha = git(root, ["rev-parse", "--short", "HEAD"]) ?? "unknown";
+  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? undefined;
+
+  return {
+    root,
+    action: "committed-baseline",
+    wroteGitignore,
+    branch,
+    commit: sha,
+    filesCommitted,
+    message:
+      `Initialised ${root} and committed ${filesCommitted} file(s) as ${sha}` +
+      `${branch ? ` on ${branch}` : ""}.` +
+      (wroteGitignore
+        ? ` Wrote a ${state.unity ? "Unity" : "generic"} .gitignore first, so Library/ and other ` +
+          `regenerable output stayed out of history.`
+        : ""),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The test loop: snapshot, run, undo
+// ---------------------------------------------------------------------------
+
+/**
+ * The prefix that makes a commit a snapshot.
+ *
+ * `undoToSnapshot` will only ever reset to a commit it can recognise as one of
+ * ours. Resetting to "whatever HEAD happens to be" would eventually rewind onto
+ * a commit the user wrote by hand, and the point of the marker is that this
+ * cannot silently happen.
+ */
+const SNAPSHOT_PREFIX = "snapshot:";
+
+/** The baseline `ensureBaseline` writes counts as a snapshot — it is the first one. */
+const BASELINE_SUBJECT = "Baseline before automated changes";
+
+function isSnapshotSubject(subject: string): boolean {
+  return subject.startsWith(SNAPSHOT_PREFIX) || subject === BASELINE_SUBJECT;
+}
+
+export interface SnapshotRef {
+  sha: string;
+  subject: string;
+  /** Commits between this snapshot and HEAD. 0 means this IS HEAD. */
+  ahead: number;
+}
+
+/**
+ * Snapshots in a root that has ALREADY passed the grant check.
+ *
+ * Split from the public function because re-resolving a resolved path is not a
+ * no-op: `resolveTarget` canonicalises, and on macOS a granted `/var/folders/…`
+ * comes back as `/private/var/folders/…`, which then fails the prefix match
+ * against the granted list it just came from. Feeding a resolved root back
+ * through the gate turned every snapshot lookup into "not a granted directory"
+ * for any path crossing a symlink — caught by verify-snapshot-undo.mjs, which
+ * works in a temp directory and therefore hits it every time.
+ *
+ * So the rule inside this module: resolve once, at the entry point, then pass
+ * the root around.
+ */
+function snapshotsAt(root: string, limit: number): SnapshotRef[] {
+  const log = git(root, ["log", "--format=%H%x00%s", "-n", "200"]);
+  const snapshots: SnapshotRef[] = [];
+
+  for (const line of (log ?? "").split("\n")) {
+    const [sha, subject] = line.split("\0");
+    if (!sha || !subject || !isSnapshotSubject(subject)) continue;
+
+    const ahead = git(root, ["rev-list", "--count", `${sha}..HEAD`]);
+    snapshots.push({ sha: sha.slice(0, 7), subject, ahead: Number(ahead) || 0 });
+    if (snapshots.length >= limit) break;
+  }
+
+  return snapshots;
+}
+
+/** Recent snapshots, newest first. */
+export function listSnapshots(requested: string | null | undefined, limit = 10):
+  | { root: string; snapshots: SnapshotRef[] }
+  | { error: string; actionRequired: string } {
+  const state = gitState(requested);
+  if ("error" in state) return state;
+  if (!state.repo) {
+    return {
+      error: `${state.root} is not a repository, so it has no snapshots.`,
+      actionRequired: `Run \`/gitinit ${state.root}\` first.`,
+    };
+  }
+
+  const root = state.repoRoot ?? state.root;
+  return { root, snapshots: snapshotsAt(root, limit) };
+}
+
+export interface SnapshotResult {
+  root: string;
+  action: "snapshotted" | "nothing-to-snapshot";
+  sha?: string;
+  subject?: string;
+  filesCommitted?: number;
+  message: string
+  warning?: string;
+}
+
+/**
+ * Commit the current state so it can be returned to.
+ *
+ * Unlike `ensureBaseline` this is expected to run over and over, so it says
+ * plainly when there was nothing to commit rather than manufacturing an empty
+ * commit — a history of identical empty snapshots makes `/undo` meaningless.
+ */
+export function snapshot(
+  requested: string | null | undefined,
+  label?: string
+): SnapshotResult | { error: string; actionRequired: string } {
+  const state = gitState(requested);
+  if ("error" in state) return state;
+
+  if (!state.repo) {
+    return {
+      error: `${state.root} is not under version control, so there is nothing to snapshot into.`,
+      actionRequired: `Run \`/gitinit ${state.root}\` first — it writes a .gitignore and a baseline commit.`,
+    };
+  }
+
+  const root = state.repoRoot ?? state.root;
+
+  if (git(root, ["add", "-A"]) === null) {
+    return {
+      error: `git add failed in ${root}.`,
+      actionRequired: `Run \`git -C ${root} add -A\` by hand to see what git says.`,
+    };
+  }
+
+  const staged = git(root, ["diff", "--cached", "--name-only"]);
+  const filesCommitted = staged ? staged.split("\n").filter((l) => l.trim()).length : 0;
+
+  if (filesCommitted === 0) {
+    const head = git(root, ["log", "--format=%h%x00%s", "-n", "1"]);
+    const [sha, subject] = (head ?? "").split("\0");
+    return {
+      root,
+      action: "nothing-to-snapshot",
+      sha,
+      subject,
+      message:
+        `Nothing has changed in ${root} since the last commit, so no snapshot was made. ` +
+        `You are already sitting on ${sha ?? "HEAD"}${subject ? ` — "${subject}"` : ""}.`,
+    };
+  }
+
+  // A label is free text from the user and becomes a commit subject, so
+  // newlines are collapsed: a multi-line subject makes `git log --format=%s`
+  // report only the first line, which would then not match the snapshot prefix.
+  const clean = (label ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const subject = `${SNAPSHOT_PREFIX} ${clean || new Date().toISOString().replace("T", " ").slice(0, 19)}`;
+
+  const committed = git(root, [
+    "-c",
+    "user.name=Cullus",
+    "-c",
+    "user.email=cullus@localhost",
+    "commit",
+    "-m",
+    subject,
+    "--no-verify",
+  ]);
+
+  if (committed === null) {
+    return {
+      error: `git commit failed in ${root}.`,
+      actionRequired:
+        `The changes are staged but not committed. Run \`git -C ${root} commit -m "${subject}"\` ` +
+        `to see why.`,
+    };
+  }
+
+  const sha = git(root, ["rev-parse", "--short", "HEAD"]) ?? "unknown";
+
+  return {
+    root,
+    action: "snapshotted",
+    sha,
+    subject,
+    filesCommitted,
+    message: `Snapshotted ${filesCommitted} change(s) in ${root} as ${sha} — "${subject}".`,
+  };
+}
+
+export interface UndoResult {
+  root: string;
+  action: "undone" | "nothing-to-undo";
+  target?: string;
+  subject?: string;
+  filesRestored?: number;
+  /** Untracked files created since the snapshot, deleted by the undo. */
+  filesRemoved?: number;
+  commitsDropped?: number;
+  message: string;
+  warning?: string;
+}
+
+/**
+ * Throw away everything since the most recent snapshot.
+ *
+ * Three refusals, in order of how expensive the mistake would be:
+ *
+ *   1. NOT ON CULLUS ITSELF. Every granted directory is a valid target and
+ *      Cullus's own root is granted, so `/undo` with the wrong default would
+ *      hard-reset the source tree of the thing running the command — including
+ *      any uncommitted work on the harness. `force` exists for the user who
+ *      genuinely means it, and the refusal names it.
+ *   2. NOT PAST A COMMIT WE DID NOT MAKE. Resetting over hand-written commits
+ *      is data loss of exactly the kind version control is supposed to prevent.
+ *   3. NOT WHEN THERE IS NOTHING TO DO. A no-op that reports success trains you
+ *      to believe the next one worked too.
+ */
+export function undoToSnapshot(
+  requested: string | null | undefined,
+  options: { force?: boolean } = {}
+): UndoResult | { error: string; actionRequired: string } {
+  const state = gitState(requested);
+  if ("error" in state) return state;
+
+  if (!state.repo) {
+    return {
+      error: `${state.root} is not under version control, so there is nothing to undo to.`,
+      actionRequired: `Run \`/gitinit ${state.root}\` before the next test run.`,
+    };
+  }
+
+  if (state.isSelf && !options.force) {
+    return {
+      error: `${state.root} is Cullus's own source tree.`,
+      actionRequired:
+        "Refusing to hard-reset the project that is running this command — uncommitted work on " +
+        "the harness would go with it, including whatever is mid-edit right now. To undo a game " +
+        "project instead, name it: `/undo --target /path/to/project`. To really reset Cullus " +
+        "itself, add --force.",
+    };
+  }
+
+  const root = state.repoRoot ?? state.root;
+  const latest = snapshotsAt(root, 1)[0];
+  if (!latest) {
+    return {
+      error: `No snapshot was found in ${root}.`,
+      actionRequired:
+        `Nothing here was committed by /gitinit or /snapshot, so there is no known-good state ` +
+        `to return to. Run \`/snapshot\` before the next test, or reset by hand if you know the ` +
+        `commit you want.`,
+    };
+  }
+
+  const dirtyCount = state.dirtyCount ?? 0;
+
+  if (dirtyCount === 0 && latest.ahead === 0) {
+    return {
+      root,
+      action: "nothing-to-undo",
+      target: latest.sha,
+      subject: latest.subject,
+      message:
+        `Nothing to undo in ${root}: the work tree is clean and HEAD is already the latest ` +
+        `snapshot, ${latest.sha} — "${latest.subject}".`,
+    };
+  }
+
+  // Refusal 2. `ahead` counts commits between the snapshot and HEAD; any of
+  // them that is not itself a snapshot is somebody's real work.
+  if (latest.ahead > 0 && !options.force) {
+    const between = git(root, ["log", "--format=%h %s", `${latest.sha}..HEAD`]) ?? "";
+    const subjects = between.split("\n").filter((l) => l.trim());
+    const foreign = subjects.filter((line) => !isSnapshotSubject(line.replace(/^\S+\s/, "")));
+
+    if (foreign.length > 0) {
+      return {
+        error:
+          `${foreign.length} commit(s) sit between the last snapshot and HEAD that were not ` +
+          `made by /snapshot.`,
+        actionRequired:
+          `Undoing would discard them:\n${foreign.map((l) => `  ${l}`).join("\n")}\n` +
+          `Snapshot the current state first with \`/snapshot\`, or add --force if you are sure.`,
+      };
+    }
+  }
+
+  // Count before resetting: afterwards there is no diff left to measure.
+  const diff = git(root, ["diff", "--name-only", latest.sha]) ?? "";
+  const untracked = git(root, ["ls-files", "--others", "--exclude-standard"]) ?? "";
+  const filesRestored =
+    diff.split("\n").filter((l) => l.trim()).length +
+    untracked.split("\n").filter((l) => l.trim()).length;
+
+  if (git(root, ["reset", "--hard", latest.sha]) === null) {
+    return {
+      error: `git reset --hard failed in ${root}.`,
+      actionRequired: `Run \`git -C ${root} reset --hard ${latest.sha}\` by hand to see why.`,
+    };
+  }
+
+  // `reset --hard` restores tracked files and leaves everything the test
+  // CREATED, because an untracked file was never git's to discard. That is the
+  // failure this whole module exists to avoid — an "undo" that reports success
+  // while half the test output is still on disk, waiting to be mistaken for
+  // real code.
+  //
+  // The usual fix, `git clean -fd`, is not safe here: dry-run against TronGame
+  // it offered to delete five of the user's own directories, because they are
+  // empty and git cannot track an empty directory.
+  //
+  // What makes a precise answer possible is that `snapshot` runs `add -A`
+  // first. Immediately after a snapshot there are NO untracked, non-ignored
+  // files — so every one present now was created afterwards, and deleting
+  // exactly that set needs no recorded state.
+  //
+  // Files only, by explicit path, via the filesystem rather than `clean`:
+  //   • `--exclude-standard` keeps .gitignore honoured, so Library/ is never in
+  //     the list. Deleting 2.5 GB of import cache would cost a 20-minute
+  //     reimport for no reason.
+  //   • Directories are never removed. An empty `Assets/New/` left behind is
+  //     inert in Unity; deleting `Assets/Prefabs 1/` is not.
+  const orphans = (git(root, ["ls-files", "--others", "--exclude-standard"]) ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let removed = 0;
+  const failed: string[] = [];
+
+  for (const relative of orphans) {
+    // Defence in depth: git reports paths relative to the repository root, and
+    // anything that resolves outside it is not something to delete.
+    const full = path.resolve(root, relative);
+    if (full !== root && !full.startsWith(root + path.sep)) {
+      failed.push(relative);
+      continue;
+    }
+
+    try {
+      fs.rmSync(full, { force: true });
+      removed++;
+    } catch {
+      failed.push(relative);
+    }
+  }
+
+  return {
+    root,
+    action: "undone",
+    target: latest.sha,
+    subject: latest.subject,
+    filesRestored,
+    filesRemoved: removed,
+    commitsDropped: latest.ahead,
+    message:
+      `Reset ${root} to ${latest.sha} — "${latest.subject}". ` +
+      `${filesRestored} file(s) restored` +
+      (removed > 0 ? `, ${removed} file(s) created since then deleted` : "") +
+      (latest.ahead > 0 ? `, ${latest.ahead} commit(s) dropped` : "") +
+      `.`,
+    ...(failed.length > 0
+      ? {
+          warning:
+            `${failed.length} untracked file(s) could not be removed: ` +
+            `${failed.slice(0, 5).join(", ")}. Check them by hand.`,
+        }
+      : {}),
+  };
+}
+
+/**
+ * The project these commands act on when no path is given.
+ *
+ * Cullus's own root is always granted, and defaulting a hard reset to it would
+ * be the worst possible guess — so self is excluded here rather than ranked
+ * last. Exactly one candidate is a default; more than one is a question.
+ */
+export function defaultProject(): { root: string } | { choices: string[] } {
+  const candidates = listFixTargets()
+    .filter((target) => !target.isSelf)
+    .map((target) => target.path);
+
+  if (candidates.length === 1) return { root: candidates[0] };
+  return { choices: candidates };
+}
+
+/** Git state for every granted directory, for the UI listing. */
+export function baselineSurvey(): GitState[] {
+  const rows: GitState[] = [];
+
+  for (const target of listFixTargets()) {
+    const state = gitState(target.path);
+    if (!("error" in state)) rows.push(state);
+  }
+
+  return rows;
+}

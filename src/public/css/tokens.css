@@ -1,0 +1,134 @@
+/* Design tokens.
+ *
+ * Every colour, size and spacing value in the dashboard resolves to one of the
+ * variables below. Nothing else should contain a raw hex code or a magic pixel
+ * value.
+ *
+ * Why this file exists: the dashboard was built with 147 inline `style=`
+ * attributes and one 84-line <style> block. The palette in it was already
+ * coherent — Tailwind's slate ramp for surfaces and sky for accent — but it was
+ * spelled out as literal hex in ~20 places. Changing "the panel background"
+ * meant finding every #1e293b and hoping you got them all.
+ *
+ * A token is just a named value. `var(--surface-2)` instead of `#1e293b` means
+ * the name says what it is for, and one edit here changes it everywhere.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * Surfaces — darkest to lightest. The number is depth, not lightness:
+   * surface-0 is the page, surface-1 is a panel sitting on it, surface-2 is
+   * something sitting on the panel.
+   * ------------------------------------------------------------------- */
+  --surface-0: #0f172a; /* page background, inputs, code blocks */
+  --surface-1: #1e293b; /* panels, sidebar, popovers */
+  --surface-2: #334155; /* raised rows, assistant messages */
+  --surface-3: #475569; /* borders on interactive elements */
+
+  --border: #334155;
+  --border-strong: #475569;
+  --border-subtle: #172033;
+
+  /* ---------------------------------------------------------------------
+   * Text — highest to lowest emphasis. Pick by how much attention the text
+   * should get, not by how light it looks.
+   * ------------------------------------------------------------------- */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+
+  /* ---------------------------------------------------------------------
+   * Accent and status. Each status has a foreground, a background and a
+   * border so a badge or banner is one class, not three inline styles.
+   * ------------------------------------------------------------------- */
+  --accent: #0ea5e9;
+  --accent-hover: #0284c7;
+  --accent-contrast: #ffffff;
+
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --warn-text: #fde68a;
+  --warn-bg: #422006;
+  --danger: #ef4444;
+  --danger-text: #fecaca;
+  --danger-bg: #451a1a;
+
+  /* ---------------------------------------------------------------------
+   * Type scale. Six steps, and that is the whole set — the old inline styles
+   * used 66 separate font-size declarations across roughly a dozen values,
+   * which is what made the dashboard look assembled rather than designed.
+   * ------------------------------------------------------------------- */
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 16px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* ---------------------------------------------------------------------
+   * Spacing. A 4px scale. Every margin, padding and gap uses one of these,
+   * so vertical rhythm holds across panels written at different times.
+   * ------------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+
+
+  /* ---------------------------------------------------------------------
+   * Added when the JS files were migrated off raw hex. These are the colours
+   * the runtime code was already using that had no name — mostly the lighter
+   * "text on a coloured background" variants that the status colours above
+   * are too saturated for.
+   * ------------------------------------------------------------------- */
+  --text-bright: #e2e8f0;   /* between primary and secondary */
+  --ok-text: #86efac;       /* success text, readable on dark */
+  --ok-bg: #052e16;
+  --ok-border: #166534;
+  --danger-light: #fca5a5;  /* failed task lines */
+  --danger-bright: #f87171;
+  --warn-bright: #fbbf24;
+  --warn-soft: #fcd34d;
+  --warn-peach: #fed7aa;
+  --warn-deep-bg: #78350f;
+  --accent-light: #38bdf8;
+  --violet: #a78bfa;
+  --purple: #a855f7;
+  --pink: #ec4899;
+  --stone-900: #1c1917;
+  --stone-700: #44403c;
+
+  /* Radii, shadows, motion */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  --shadow-popover: 0 -8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.5);
+
+  --transition: 0.2s ease;
+
+  /* Layout */
+  --sidebar-width: 330px;
+}
+
+/* Respect the OS setting. Animations here are decorative, so removing them
+ * costs nothing and the setting exists for people who get motion sickness. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition: 0s;
+  }
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

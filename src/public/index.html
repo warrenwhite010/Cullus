@@ -1,0 +1,3123 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Cullus Dashboard</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/components.css">
+</head>
+
+<body>
+
+  <div class="sidebar">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <h2 style="margin: 0; font-size: 17px;">🛠️ Cullus Ai assistant</h2>
+      <button id="settings-open" class="secondary" style="padding: 6px 10px; font-size: 11px;"
+        title="Connections and settings">⚙️ Settings</button>
+    </div>
+
+    <!-- Chat history -->
+    <div>
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="margin: 0;">💬 Chats</h3>
+        <button id="session-new" style="padding: 4px 8px; font-size: 11px;">+ New</button>
+      </div>
+      <div id="session-list" style="margin-top: 8px; font-size: 12px; max-height: 180px; overflow-y: auto;">Loading…
+      </div>
+    </div>
+
+    <!-- Work checklist -->
+    <div>
+      <h3>☑️ Checklist</h3>
+      <div id="checklist-meta" style="font-size: 10px; color: var(--text-muted); margin-bottom: 4px;"></div>
+      <div id="checklist-panel" style="font-size: 12px; max-height: 200px; overflow-y: auto;">Nothing in progress.</div>
+    </div>
+
+    <!-- Multi-Agent Pipeline -->
+    <div style="border-top: 1px solid var(--surface-2); padding-top: 14px;">
+      <label style="display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;">
+        <input type="checkbox" id="enable-pipeline-toggle" style="margin-right: 8px; flex: none;">
+        <strong style="font-size: 13px;">Enable Multi-Agent Pipeline</strong>
+      </label>
+      <div id="pipeline-model-selectors" style="display: none; flex-direction: column; gap: 8px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="radio" name="pipeline-mode" value="fanout" checked style="flex: none; width: auto;">
+            <span>Split tasks across N workers</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="radio" name="pipeline-mode" value="roles" style="flex: none; width: auto;">
+            <span>Different model per role</span>
+          </label>
+        </div>
+
+        <div id="fanout-controls">
+          <label class="label">Parallel workers</label>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+            <input type="range" id="worker-count" min="1" max="8" value="3" style="flex: 1; padding: 0;">
+            <strong id="worker-count-value" style="font-size: 13px; min-width: 14px; text-align: right;">3</strong>
+          </div>
+          <div id="worker-estimate" style="font-size: 10px; color: var(--text-faint); margin-top: 4px;"></div>
+        </div>
+
+        <div>
+          <label class="label" id="role-1-label">Planner</label>
+          <select id="triage-model-select" class="model-dropdown"
+            style="padding: 6px; font-size: 12px; width: 100%;"></select>
+        </div>
+        <div>
+          <label class="label" id="role-2-label">Workers</label>
+          <select id="engineer-model-select" class="model-dropdown"
+            style="padding: 6px; font-size: 12px; width: 100%;"></select>
+        </div>
+        <div id="role-3-wrap">
+          <label class="label">Manager / verdict</label>
+          <select id="manager-model-select" class="model-dropdown"
+            style="padding: 6px; font-size: 12px; width: 100%;"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Everything the assistant does: tools, commands, edits, /fix phases, workers -->
+    <div style="flex: 1; display: flex; flex-direction: column; min-height: 160px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="margin: 0;">⚙️ Activity</h3>
+        <button id="activity-clear" class="secondary" style="padding: 3px 8px; font-size: 10px;">Clear</button>
+      </div>
+      <div id="activity-filters" style="display: flex; gap: 3px; flex-wrap: wrap; margin: 6px 0;">
+        <button class="chip active" data-akind="all" style="font-size: 9px; padding: 2px 7px;">All</button>
+        <button class="chip" data-akind="tool" style="font-size: 9px; padding: 2px 7px;">Tools</button>
+        <button class="chip" data-akind="command" style="font-size: 9px; padding: 2px 7px;">Commands</button>
+        <button class="chip" data-akind="thinking" style="font-size: 9px; padding: 2px 7px;">Thinking</button>
+        <button class="chip" data-akind="edit" style="font-size: 9px; padding: 2px 7px;">Edits</button>
+        <button class="chip" data-akind="fix" style="font-size: 9px; padding: 2px 7px;">/fix</button>
+      </div>
+      <div id="activity-panel" class="panel"
+        style="font-size: 11px; background: var(--surface-0); max-height: 320px; flex: none; padding: 8px;">Nothing yet.
+      </div>
+    </div>
+
+    <div id="debug-panel-wrap" style="display: none; flex-direction: column;">
+      <h3>🐛 Debug Trace</h3>
+      <div id="debug-panel" class="panel"
+        style="font-size: 10px; background: var(--surface-0); max-height: 200px; flex: none; font-family: ui-monospace, Menlo, monospace;">
+        Waiting for activity…</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+      <h2 style="margin: 0;">Cullus</h2>
+      <div id="mode-chips" style="display: flex; gap: 5px; flex-wrap: wrap; flex: 1;"></div>
+      <span id="status-badge"
+        style="background: var(--ok); padding: 4px 10px; border-radius: 12px; font-size: 12px; color: black; font-weight: bold; flex: none;">Status:
+        Ready</span>
+      <!-- Beside the status badge on purpose. There was already a #stop-button
+           down in the composer row, but it was dead markup: display:none, no
+           listener, and nothing ever unhid it — so a run that went wrong could
+           only be stopped by /reset or killing the server. The badge is where
+           you look when you want to know whether it is still going, so it is
+           also where the way to stop it belongs. -->
+      <button type="button" id="status-stop" title="Stop the running turn"
+        style="display: none; background: var(--danger); color: white; border: none; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; cursor: pointer; flex: none;">■
+        Stop</button>
+    </div>
+
+    <div id="health-banner" class="banner"></div>
+
+    <div class="panel">
+      <div id="chat-box" class="chat-box"></div>
+
+      <div id="slash-menu"
+        style="display: none; position: absolute; bottom: 70px; left: 15px; right: 15px; background: var(--surface-1); border: 1px solid var(--surface-3); border-radius: 6px; z-index: 100; box-shadow: 0 -8px 24px rgba(0,0,0,.45);">
+        <div id="slash-menu-items" style="max-height: min(460px, 58vh); overflow-y: auto;"></div>
+        <div id="slash-menu-footer"
+          style="padding: 5px 12px; border-top: 1px solid var(--surface-2); font-size: 10px; color: var(--text-muted); background: var(--border-subtle); border-radius: 0 0 6px 6px;">
+        </div>
+      </div>
+
+      <!-- Tools popup. Same anchor and shape as the slash menu above: both
+           answer "what can I use here?" and should feel like one surface. -->
+      <div id="tools-menu" class="tools-menu">
+        <div class="tools-menu-head">
+          <input id="tools-menu-search" placeholder="Filter tools by name, description or server…" />
+          <span id="tools-menu-count" class="tools-count"></span>
+          <button id="tools-menu-close" class="ghost">Close</button>
+        </div>
+        <div id="tools-menu-body" class="tools-menu-body"></div>
+        <div id="tools-menu-foot" class="tools-menu-foot"></div>
+      </div>
+
+      <!-- Model choice lives with the prompt, not in the sidebar: it is a
+           property of the message you are about to send. The hidden <select> is
+           the single source of truth every other module already reads. -->
+      <div id="model-popover" class="model-popover">
+        <div id="model-popover-list"></div>
+        <div
+          style="padding: 6px 12px; border-top: 1px solid var(--surface-2); font-size: 10px; color: var(--text-muted);">
+          Pull more with <code>ollama pull &lt;tag&gt;</code>
+        </div>
+      </div>
+
+      <!-- Mode line, claude-code style: the current autonomy level, cycled with
+           shift+tab. Sits directly above the input because it changes what
+           pressing Enter will actually let the model do. -->
+      <div id="mode-line" style="display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 6px;">
+        <button type="button" id="mode-button"
+          style="background: transparent; border: none; color: var(--warn-bright); font-weight: bold; padding: 2px 0; cursor: pointer; font-size: 11px;">
+          ▶▶ auto mode on
+        </button>
+        <span style="color: var(--text-faint);">(shift+tab to cycle)</span>
+        <span id="mode-detail"
+          style="color: var(--surface-3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+      </div>
+
+      <div class="input-row">
+        <button type="button" id="model-button" class="model-button">Loading…</button>
+        <input type="text" id="prompt-input" placeholder="Ask assistant, or type / to see commands…" autofocus
+          autocomplete="off" />
+        <button id="send-button" onclick="sendMessage()">Send</button>
+        <button type="button" id="stop-button" style="display: none; background: var(--danger);">■ Stop</button>
+      </div>
+      <select id="model-select" class="model-dropdown" style="display: none;"></select>
+      <div id="model-note" style="font-size: 10px; color: var(--text-muted); margin-top: 4px;"></div>
+    </div>
+
+    <!-- Token / context usage, always visible -->
+    <div class="usage-bar">
+      <span>⚡ Session</span>
+      <strong id="session-total" style="color: var(--text-primary);">0</strong>
+      <span>tokens</span>
+      <span class="sep">·</span>
+      <span id="session-split">0 in / 0 out</span>
+      <span class="sep">·</span>
+      <span id="session-turns">0 turns</span>
+      <span class="sep">|</span>
+      <span>Context</span>
+      <div class="meter" id="context-meter"><span></span></div>
+      <span id="context-label">—</span>
+
+      <!-- Memory, hidden until the first successful poll and on any platform
+           where the figures do not exist. Click to expand the breakdown. -->
+      <span class="sep" id="memory-sep" style="display: none;">|</span>
+      <span id="memory-summary" style="display: none; cursor: pointer;"
+        title="Click for the full breakdown">
+        <span>Memory</span>
+        <div class="meter" id="memory-meter" style="display: inline-block; vertical-align: middle;"><span></span></div>
+        <span id="memory-label">—</span>
+      </span>
+    </div>
+
+    <!-- The Activity Monitor breakdown. Collapsed by default: the bar above is
+         already busy, and the at-a-glance number is the pressure, not the six
+         components of it. -->
+    <div id="memory-detail" class="usage-bar" style="display: none; margin-top: 4px; font-size: 11px;"></div>
+  </div>
+
+  <!-- Settings: a full-screen overlay rather than a second browser window, so
+       there is one socket and no state to mirror between windows. -->
+  <div id="settings-overlay" class="overlay">
+    <div class="settings-window">
+      <div class="settings-rail">
+        <div style="font-size: 15px; font-weight: bold; padding: 4px 12px 12px;">Settings</div>
+        <button class="settings-tab active" data-tab="connections">🔌 Connections</button>
+        <button class="settings-tab" data-tab="vault">📓 Vault memory</button>
+        <button class="settings-tab" data-tab="directories">📂 Directories</button>
+        <button class="settings-tab" data-tab="servers">🖥️ MCP Servers</button>
+        <button class="settings-tab" data-tab="performance">⚡ Performance</button>
+        <button class="settings-tab" data-tab="doctor">🩺 Diagnostics</button>
+        <button class="settings-tab" data-tab="cron">⏱️ Scheduled jobs</button>
+        <button class="settings-tab" data-tab="about">ℹ️ About</button>
+        <div style="flex: 1;"></div>
+        <button id="settings-close" class="secondary" style="text-align: center;">Close (Esc)</button>
+      </div>
+
+      <div class="settings-body">
+        <section class="settings-pane" data-pane="connections">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h3 style="margin: 0;">Connections</h3>
+            <button data-open-add style="padding: 6px 12px; font-size: 12px;">+ Add</button>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin: 8px 0 6px;">
+            Everything Cullus can connect to. Tokens are stored in the macOS Keychain and never sent back to this page.
+          </div>
+          <div class="chip-row">
+            <button class="chip active" data-filter="all">All</button>
+            <button class="chip" data-filter="connected">Connected</button>
+            <button class="chip" data-filter="not-connected">Not connected</button>
+          </div>
+          <table class="conn-table">
+            <thead>
+              <tr>
+                <th style="width: 40%;">Connector</th>
+                <th style="width: 18%;">Type</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="connections-body">
+              <tr>
+                <td colspan="3" style="color: var(--text-muted);">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+          <div id="add-server-host" style="margin-top: 18px;"></div>
+          <div id="connection-form" style="margin-top: 18px;"></div>
+        </section>
+
+        <section class="settings-pane" data-pane="vault" style="display: none;">
+          <h3>Vault memory</h3>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+            Where the assistant keeps its memory inside your vault. Paths are relative to the vault
+            root; leave one blank to switch that feature off.
+          </div>
+          <div id="vault-paths-form"></div>
+
+          <h3 style="margin-top: 22px;">When can it write?</h3>
+          <table class="conn-table" style="margin-bottom: 10px;">
+            <thead>
+              <tr>
+                <th style="width:40%;">Mode</th>
+                <th>Anywhere in your vault</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>auto</code></td>
+                <td>asks you first, then writes</td>
+              </tr>
+              <tr>
+                <td><code>manual</code></td>
+                <td>asks you first, then writes</td>
+              </tr>
+              <tr>
+                <td><code>plan</code></td>
+                <td>cannot write — mutating tools are withheld</td>
+              </tr>
+              <tr>
+                <td><code>accept edits</code></td>
+                <td>writes without asking</td>
+              </tr>
+            </tbody>
+          </table>
+          <div id="vault-lock-note" style="font-size: 11px; color: var(--text-muted);"></div>
+          <div style="font-size: 11px; color: var(--text-faint); margin-top: 10px;">
+            Chat transcripts, <code>config.json</code> and tokens stay out of the vault: transcripts
+            are noisy JSON that would churn your sync, a config in a synced folder turns a sync
+            conflict into a broken config, and secrets belong in the Keychain.
+          </div>
+
+          <h3 style="margin-top: 22px;">Recipes</h3>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.6;">
+            A recipe is a shell command you keep re-typing, saved as a note. Any note in your
+            <strong>Recipes</strong> folder above becomes a tool the assistant can call by name —
+            so "rebuild and restart" runs your command instead of the model improvising one.
+          </div>
+
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+            <strong style="color:var(--text-bright);">To add one</strong>, create a note in that folder with
+            two frontmatter fields:
+          </div>
+          <pre
+            style="background:var(--surface-0); border:1px solid var(--surface-1); border-radius:6px; padding:10px 12px; font-size:11.5px; color:var(--text-secondary); margin:0 0 10px;">---
+description: rebuild and restart the assistant
+command: npm start
+---
+Anything below the frontmatter is a note to yourself.</pre>
+
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.6;">
+            That note becomes the tool <code>recipe_rebuild_and_restart</code>, named after the
+            file. The <code>description</code> is what the model reads when deciding whether to
+            use it, so write it as the task, not the command.
+          </div>
+
+          <div
+            style="font-size: 11px; color: var(--ok-text); background:var(--ok-bg); border:1px solid var(--ok-border); border-radius:6px; padding:8px 10px; margin-bottom: 10px; line-height:1.6;">
+            <strong>Why this is safer than letting it use the shell:</strong> the model chooses
+            <em>which</em> recipe to run — never what the command says. The command comes from a
+            file you wrote, and there is no argument substitution at all, so it cannot smuggle
+            anything into the string. Recipes still obey the current autonomy mode, and a handful
+            of catastrophic commands are refused even from your own note.
+          </div>
+
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
+            <strong style="color:var(--text-bright);">Recipes found</strong> — a note missing
+            <code>command:</code> is listed as ignored, with the reason:
+          </div>
+          <div id="vault-recipes" style="font-size: 12px;">—</div>
+        </section>
+
+        <section class="settings-pane" data-pane="directories" style="display: none;">
+          <h3>Accessible directories</h3>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+            What the filesystem server may read, and write to when set to read-write. Also the consent gate for
+            <code>/fix --target</code>: only granted directories can be repaired.
+          </div>
+          <div id="allowed-paths-list"
+            style="margin-bottom: 10px; font-size: 12px; max-height: 260px; overflow-y: auto;">Loading…</div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="new-path-input" placeholder="/absolute/path"
+              style="font-size: 12px; padding: 8px;" />
+            <button onclick="browseForPath()" class="secondary" style="padding: 8px 10px; font-size: 12px;"
+              title="Pick with Finder">📁</button>
+            <button onclick="addPath()" style="padding: 8px 12px; font-size: 12px;">Add</button>
+          </div>
+        </section>
+
+        <section class="settings-pane" data-pane="servers" style="display: none;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h3 style="margin: 0;">MCP servers</h3>
+            <button data-open-add style="padding: 6px 12px; font-size: 12px;">+ Add</button>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin: 8px 0 10px;">
+            Every server, its connection state, and its write mode. Read-only withholds mutating tools from the model
+            entirely.
+          </div>
+          <div id="mcp-servers-list" style="font-size: 12px;">Loading…</div>
+          <div
+            style="font-size: 11px; color: var(--text-muted); margin-top: 14px; background:var(--surface-0); border:1px solid var(--surface-1); border-radius:6px; padding:9px 11px; line-height:1.6;">
+            🔐 <strong style="color:var(--text-bright);">API tokens live in Connections.</strong>
+            Each connector's Connect or Edit form holds its own credential, shows where that
+            credential is stored, and is the only place one is entered.
+            <button data-goto-connections class="secondary"
+              style="padding:3px 9px; font-size:10px; margin-left:6px;">Open Connections</button>
+          </div>
+        </section>
+
+        <section class="settings-pane" data-pane="performance" style="display: none;">
+          <h3>Performance</h3>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+            How much the model has to read before it can answer, and how long it is given.
+            Prompt reading is not streamed — it is dead time before the first word — and on a
+            local model it runs at roughly 250 tokens per second. Changes apply to the next
+            message; nothing needs restarting.
+          </div>
+
+          <div id="performance-diagnostics" style="margin-bottom: 16px;">Loading…</div>
+          <div id="performance-form"></div>
+
+          <h3 style="margin-top: 22px;">When you close the browser</h3>
+          <div id="performance-shutdown"></div>
+
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 14px;">
+            <button id="performance-save" style="padding: 8px 14px; font-size: 12px;">Save</button>
+            <button id="performance-reset" class="secondary" style="padding: 8px 14px; font-size: 12px;">
+              Restore defaults
+            </button>
+            <span id="performance-status" style="font-size: 11px; color: var(--text-muted);"></span>
+          </div>
+
+          <div id="performance-env" style="margin-top: 14px;"></div>
+        </section>
+
+        <section class="settings-pane" data-pane="doctor" style="display: none;">
+          <div class="row-between mb-4">
+            <h3 style="margin: 0;">Diagnostics</h3>
+            <button id="doctorRun">Run diagnostics</button>
+          </div>
+          <div id="doctorSummary" class="doctor-summary"></div>
+          <div id="doctorBody"></div>
+        </section>
+
+        <section class="settings-pane" data-pane="cron" style="display: none;">
+          <h3>Scheduled jobs</h3>
+          <p class="cron-hint mb-4">
+            Run something on a schedule. A <strong>prompt</strong> job asks the model every time it
+            fires. A <strong>monitor</strong> job runs a shell command first and only wakes the model
+            when that command's output changes — which is what makes checking something every fifteen
+            minutes cheap instead of ninety-six model calls a day.
+          </p>
+
+          <div id="cronList" class="cron-list"></div>
+
+          <div id="cronError" class="banner error hidden mt-4"></div>
+
+          <div class="cron-form">
+            <div class="cron-form-row">
+              <input id="cronName" class="grow" placeholder="Name, e.g. oanda-balance" />
+              <select id="cronKind">
+                <option value="prompt">Prompt</option>
+                <option value="monitor">Monitor</option>
+              </select>
+            </div>
+
+            <div class="cron-form-row">
+              <select id="cronPreset" class="grow">
+                <option value="*/5 * * * *">Every 5 minutes</option>
+                <option value="*/15 * * * *" selected>Every 15 minutes</option>
+                <option value="*/30 * * * *">Every 30 minutes</option>
+                <option value="0 * * * *">Every hour, on the hour</option>
+                <option value="0 */4 * * *">Every 4 hours</option>
+                <option value="0 9 * * *">Every day at 9:00 am</option>
+                <option value="0 18 * * *">Every day at 6:00 pm</option>
+                <option value="0 9 * * 1-5">Weekdays at 9:00 am</option>
+                <option value="0 9 * * 1">Every Monday at 9:00 am</option>
+                <option value="0 0 1 * *">First of the month, midnight</option>
+                <option value="custom">Custom schedule…</option>
+              </select>
+            </div>
+
+            <div id="cronCustomRow" class="cron-form-row hidden">
+              <input id="cronSchedule" class="grow t-mono" placeholder="*/15 * * * *" />
+            </div>
+            <div id="cronCustomHint" class="cron-hint hidden">
+              Five fields separated by spaces, in your local time:
+              <code>minute hour day-of-month month day-of-week</code>.
+              <code>*</code> means "every". <code>*/15</code> means "every 15th".
+              <code>1-5</code> means Monday to Friday.
+            </div>
+
+            <div id="cronPreview" class="cron-preview"></div>
+
+            <div id="cronScriptRow" class="cron-form-row">
+              <input id="cronScript" class="grow t-mono"
+                placeholder="curl -s https://api.example.com/balance | jq .balance" />
+            </div>
+            <div id="cronMonitorHint" class="cron-hint">
+              The model runs only when this command's output changes, compared as exact bytes.
+              <strong>Make the output stable</strong> — sort your results and drop any timestamp, or
+              every tick looks like a change and the saving disappears. A command that fails is
+              treated as an error, never as a change.
+            </div>
+
+            <textarea id="cronPrompt" placeholder="What should the assistant do when this fires?"></textarea>
+
+            <div class="row-between">
+              <span class="cron-hint">Jobs run headlessly — no approval prompts, no questions.</span>
+              <button id="cronAdd">Add job</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-pane" data-pane="about" style="display: none;">
+          <h3>About</h3>
+          <div id="about-body" style="font-size: 12px; color: var(--text-secondary); line-height: 1.6;">Loading…</div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    let availableModels = [];
+    let slashActiveIndex = 0;
+    let slashFiltered = [];
+
+    // ==========================================================================
+    // Slash commands — single dispatch table, used for both the menu and execution
+    // ==========================================================================
+    const COMMANDS = {
+      "/help": { description: "List every command and what it does", run: cmdHelp },
+      "/doctor": { description: "Health-check the whole setup and say what to fix", run: cmdDoctor },
+      "/deep-research": { description: "Search, read, verify and synthesize a cited report", run: cmdDeepResearch },
+      "/search": { description: "One-off web search — /search <query>", run: cmdSearch },
+      "/status": { description: "Ollama, vault and MCP health in one view", run: cmdStatus },
+      "/verify": { description: "Prove a change works end-to-end, not just in theory", run: cmdVerify },
+      "/run": { description: "Launch this project's app and confirm it starts", run: cmdRun },
+      "/plan": { description: "Plan-first mode: withhold every mutating tool", run: cmdPlan },
+      "/goal": { description: "Set a standing goal — /goal <what> | /goal go | /goal off to drop it", run: cmdGoal },
+      "/continue": { description: "Auto-continue unfinished turns — /continue on|off|<rounds>", run: cmdContinue },
+      "/effort": { description: "Set thinking depth — /effort low|medium|high", run: cmdEffort },
+      "/fidelity": { description: "How much polish to build — /fidelity blockout|playable|production", run: cmdFidelity },
+      "/adhd": { description: "Toggle ADHD-shaped output: action first, numbered", run: cmdAdhd },
+      "/debug": { description: "Toggle verbose tracing of each inference step", run: cmdDebug },
+      "/prompt": { description: "Interview me, then write a prompt a small model can follow — /prompt <rough ask>", run: cmdPrompt },
+      "/money": { description: "Take the highest expected-value trades available, within the risk budget", run: cmdMoney },
+      "/roi": { description: "Rank today's setups by expected return, with the money each is worth", run: cmdRoi },
+      "/tradereport": { description: "How the day or week went, and what to keep or adjust — /tradereport [today|week]", run: cmdTradeReport },
+      "/pairs": { description: "Sweep every tradeable instrument and pick the watchlist", run: cmdPairs },
+      "/aggression": { description: "Passive↔aggressive dial — /aggression [conservative|balanced|aggressive|max]", run: cmdAggression },
+      "/autopilot": { description: "Scheduled trader — /autopilot [status|schedule <cron>|unschedule]", run: cmdAutopilot },
+      "/learn": { description: "Reflect on a success or correction and save it as a skill", run: cmdLearn },
+      "/skills": { description: "List reusable prompt macros — /skills <name>", run: cmdSkills },
+      "/models": { description: "List locally available Ollama models", run: cmdModels },
+      "/model": { description: "Switch active model — /model <tag>", run: cmdModel },
+      "/tools": { description: "List every tool the model can currently call", run: cmdTools },
+      "/newtool": { description: "Add a tool — /newtool <name> | <what it does> | <command>", run: cmdNewTool },
+      "/mcp": { description: "Show connection state of each MCP server", run: cmdMcp },
+      "/vault": { description: "Show vault path, or set it — /vault set <path>", run: cmdVault },
+      "/paths": { description: "List accessible directories — /paths add <path>", run: cmdPaths },
+      "/browse": { description: "Open Finder to grant access to a directory", run: cmdBrowse },
+      "/gitinit": { description: "Make a project revertable before a destructive run — /gitinit [path]", run: cmdGitInit },
+      "/build": { description: "Run the last plan's build prompt in a clean chat — /build [prompt]", run: cmdBuild },
+      "/snapshot": { description: "Save the current state so /undo can return to it — /snapshot <label>", run: cmdSnapshot },
+      "/undo": { description: "Throw away everything since the last snapshot", run: cmdUndo },
+      "/snapshots": { description: "List recent snapshots and which one you're on", run: cmdSnapshots },
+      "/tokens": { description: "Session token usage breakdown", run: cmdTokens },
+      "/clear": { description: "Clear the transcript on screen only", run: cmdClear },
+      "/reset": { description: "Clear transcript, history, tokens and scratchpad", run: cmdReset },
+      "/fix": { description: "Repair until build+verify pass — /fix <symptom> [--target p] [--rounds n]", run: cmdFix },
+      "/settings": { description: "Open Settings → Connections", run: cmdSettings },
+      "/pipeline": { description: "Toggle fan-out — /pipeline workers <n> | mode fanout|roles", run: cmdPipeline },
+      "/exit": { description: "Shut down the assistant server and close", run: cmdExit },
+    };
+
+    const promptInput = document.getElementById("prompt-input");
+    const slashMenu = document.getElementById("slash-menu");
+
+    // ==========================================================================
+    // Rendering helpers
+    // ==========================================================================
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    // Small models emit angle brackets and fenced code constantly; escape first,
+    // then re-introduce only fenced blocks, inline code and line breaks.
+    function renderContent(text) {
+      let html = escapeHtml(text);
+      html = html.replace(/```(\w+)?\n?([\s\S]*?)```/g, (_m, _lang, body) => `<pre>${body}</pre>`);
+      html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+      return html.replace(/\n/g, "<br>");
+    }
+
+    function appendMessage(sender, html, className) {
+      const chatBox = document.getElementById("chat-box");
+      const div = document.createElement("div");
+      div.className = `message ${className}`;
+      div.innerHTML = `<strong>${escapeHtml(sender)}:</strong> ${html}`;
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+      return div;
+    }
+
+    function appendSystem(html) { appendMessage("System", html, "system-msg"); }
+    function appendPlain(sender, text, cls) { appendMessage(sender, renderContent(text), cls); }
+
+    // Any status that is not a resting state means something is running, so the
+    // Stop button follows the badge rather than being tracked separately — one
+    // source of truth, and no way for the button to be hidden during a run.
+    const RESTING_STATUSES = new Set(["Ready", "Error", "Stopped"]);
+
+    function setStatus(text) {
+      const badge = document.getElementById("status-badge");
+      badge.innerText = `Status: ${text}`;
+      badge.style.background = text === "Error" ? "var(--danger)" : text === "Ready" ? "var(--ok)" : "var(--warn)";
+      badge.style.color = text === "Error" ? "white" : "black";
+
+      const stop = document.getElementById("status-stop");
+      if (stop) stop.style.display = RESTING_STATUSES.has(text) ? "none" : "inline-block";
+    }
+
+    function fmt(n) { return Number(n ?? 0).toLocaleString(); }
+
+    // ==========================================================================
+    // Token + context usage
+    // ==========================================================================
+
+    function updateSessionUsage(session) {
+      if (!session) return;
+      document.getElementById("session-total").innerText = fmt(session.totalTokens);
+      document.getElementById("session-split").innerText =
+        `${fmt(session.promptTokens)} in / ${fmt(session.completionTokens)} out`;
+      document.getElementById("session-turns").innerText =
+        `${fmt(session.turns)} turn${session.turns === 1 ? "" : "s"}`;
+
+      // The context window is chosen per turn, so on a page load into a restored
+      // session it is not known yet. Showing what was spent beats an em-dash,
+      // which read as "the counter is broken" over a full transcript.
+      if (lastContextLength === 0 && session.totalTokens > 0) {
+        document.getElementById("context-label").innerText = `${fmt(session.totalTokens)} used`;
+      }
+    }
+
+    // Last window the model actually ran with. 0 until a turn completes.
+    let lastContextLength = 0;
+
+    function updateContextMeter(usage) {
+      if (!usage || !usage.contextLength) return;
+      lastContextLength = usage.contextLength;
+
+      // The biggest single call, not the turn's running total. Summing every
+      // step and dividing by one window measured nothing — it grew with step
+      // count on turns that were never close to full.
+      const used = usage.peakPromptTokens || usage.promptTokens + usage.completionTokens;
+      const pct = Math.min(100, Math.round((used / usage.contextLength) * 100));
+
+      const meter = document.getElementById("context-meter");
+      meter.firstElementChild.style.width = `${pct}%`;
+      meter.className = "meter" + (pct >= 90 ? " danger" : pct >= 75 ? " warn" : "");
+
+      document.getElementById("context-label").innerText =
+        `${fmt(used)} / ${fmt(usage.contextLength)} (${pct}%)`;
+    }
+
+    // ==========================================================================
+    // Memory pressure — Activity Monitor's figures, in the status bar
+    // ==========================================================================
+    //
+    // Client-polled on purpose. A server-side timer would keep sampling with no
+    // browser attached, and pausing while the tab is hidden costs nothing to
+    // arrange here whereas the server cannot know. Measured before building
+    // this: vm_stat is ~2.7ms, so a 3s poll is ~0.09% of one core.
+
+    const MEMORY_POLL_MS = 3000;
+    let memoryDetailOpen = false;
+    let memoryTimer = null;
+
+    /** Bytes as GB with one decimal — the unit Activity Monitor uses. */
+    function gb(bytes) {
+      return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+    }
+
+    function renderMemory(mem) {
+      const sep = document.getElementById("memory-sep");
+      const summary = document.getElementById("memory-summary");
+      const detail = document.getElementById("memory-detail");
+
+      // Hide the whole thing rather than show zeroes: on Linux these figures do
+      // not exist, and an empty meter reads as "no memory in use".
+      if (!mem || !mem.available) {
+        sep.style.display = "none";
+        summary.style.display = "none";
+        detail.style.display = "none";
+        return;
+      }
+
+      sep.style.display = "";
+      summary.style.display = "";
+
+      const pct = mem.total ? Math.min(100, Math.round((mem.used / mem.total) * 100)) : 0;
+
+      // The METER shows used/total, which is a defined quantity. The COLOUR
+      // comes from the kernel's own pressure verdict, which is what tints
+      // Activity Monitor's graph — rather than a ratio we invented and called
+      // pressure. When the kernel does not report a level, fall back to the
+      // ratio so the bar is never uninformative.
+      const byPressure = { normal: "", warning: " warn", critical: " danger" }[mem.pressure];
+      const state = byPressure !== undefined ? byPressure : pct >= 90 ? " danger" : pct >= 75 ? " warn" : "";
+
+      const meter = document.getElementById("memory-meter");
+      meter.firstElementChild.style.width = `${pct}%`;
+      meter.className = "meter" + state;
+
+      const swapNote = mem.swapUsed > 0 ? ` · swap ${gb(mem.swapUsed)}` : "";
+      document.getElementById("memory-label").innerText =
+        `${gb(mem.used)} / ${gb(mem.total)} (${mem.pressure})${swapNote}`;
+
+      if (!memoryDetailOpen) {
+        detail.style.display = "none";
+        return;
+      }
+
+      const rows = [
+        ["App Memory", gb(mem.app)],
+        ["Wired Memory", gb(mem.wired)],
+        ["Compressed", gb(mem.compressed)],
+        ["Cached Files", gb(mem.cachedFiles)],
+        [
+          "Swap Used",
+          mem.swapTotal ? `${gb(mem.swapUsed)} of ${gb(mem.swapTotal)}` : gb(mem.swapUsed),
+        ],
+        ["Pressure", mem.pressure],
+      ];
+
+      detail.style.display = "";
+      detail.innerHTML = rows
+        .map(
+          ([label, value], i) =>
+            `${i ? '<span class="sep">·</span>' : ""}<span>${escapeHtml(label)}</span>` +
+            `<strong style="color: var(--text-primary);">${escapeHtml(value)}</strong>`
+        )
+        .join(" ");
+    }
+
+    async function pollMemory() {
+      try {
+        const { body } = await safeJson("/api/system/memory");
+        renderMemory(body);
+      } catch {
+        /* a status readout must never surface an error; the next poll retries */
+      }
+    }
+
+    function startMemoryPolling() {
+      if (memoryTimer) return;
+      pollMemory();
+      memoryTimer = setInterval(() => {
+        // Browsers throttle a hidden tab's timers anyway; skipping the work
+        // outright means a backgrounded window costs exactly nothing.
+        if (!document.hidden) pollMemory();
+      }, MEMORY_POLL_MS);
+    }
+
+    document.getElementById("memory-summary").addEventListener("click", () => {
+      memoryDetailOpen = !memoryDetailOpen;
+      pollMemory();
+    });
+
+    // Repaint promptly on return rather than waiting out the interval — coming
+    // back to a stale reading is the one moment the number matters most.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollMemory();
+    });
+
+    function usageFooter(usage) {
+      if (!usage) return "";
+      // Peak single-step prompt against the window — the only ratio that can
+      // exceed 100% for a real reason. Falls back to the old sum only for
+      // historical turns saved before peakPromptTokens existed.
+      const peak = usage.peakPromptTokens || usage.promptTokens + usage.completionTokens;
+      const pct = usage.contextLength ? Math.round((peak / usage.contextLength) * 100) : null;
+      const parts = [
+        `⚡ ${fmt(usage.totalTokens)} tokens`,
+        `${fmt(usage.promptTokens)} in / ${fmt(usage.completionTokens)} out`,
+      ];
+      if (usage.steps > 1) parts.push(`${usage.steps} steps`);
+      if (pct !== null) parts.push(`peak ${pct}% of context`);
+      return `<div class="msg-usage">${parts.join(" · ")}</div>`;
+    }
+
+    // ==========================================================================
+    // Slash menu
+    // ==========================================================================
+
+    /**
+     * Move the highlight without rebuilding the list. Rebuilding under the
+     * cursor detaches the node between mousedown and mouseup, so the browser
+     * fires no click and the selection is silently lost.
+     */
+    function highlightMenuItem(index, scroll) {
+      slashActiveIndex = index;
+      document.getElementById("slash-menu-items")
+        .querySelectorAll("[data-index]")
+        .forEach((el) => {
+          const on = Number(el.dataset.index) === index;
+          el.style.background = on ? "var(--surface-2)" : "transparent";
+          if (on && scroll) el.scrollIntoView({ block: "nearest" });
+        });
+    }
+
+    function renderSlashMenu(filtered) {
+      slashFiltered = filtered;
+      if (filtered.length === 0) { slashMenu.style.display = "none"; return; }
+
+      const items = document.getElementById("slash-menu-items");
+      items.innerHTML = "";
+
+      filtered.forEach((name, index) => {
+        const div = document.createElement("div");
+        const active = index === slashActiveIndex;
+        div.dataset.index = String(index);
+        div.style.cssText = `padding: 7px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--surface-2); font-size: 13px; background: ${active ? "var(--surface-2)" : "transparent"};`;
+        div.innerHTML = `<span style="font-weight: bold; color: var(--accent); white-space: nowrap;">${escapeHtml(name)}</span><span style="color: var(--text-muted); text-align: right;">${escapeHtml(COMMANDS[name].description)}</span>`;
+        // mousedown, not click: it fires before focus leaves the input, and
+        // preventDefault keeps the caret where it is.
+        div.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          promptInput.value = name + " ";
+          slashMenu.style.display = "none";
+          promptInput.focus();
+        });
+        // mousemove, not mouseenter: a list scrolling under a still cursor
+        // should not steal the highlight from the arrow keys.
+        div.addEventListener("mousemove", () => {
+          if (slashActiveIndex !== index) highlightMenuItem(index, false);
+        });
+        items.appendChild(div);
+      });
+
+      const total = Object.keys(COMMANDS).length;
+      document.getElementById("slash-menu-footer").innerHTML =
+        `${filtered.length} of ${total} commands · <strong>↑ ↓</strong> to browse · ` +
+        `<strong>Tab</strong> or <strong>Enter</strong> to complete · <strong>click</strong> to pick · ` +
+        `<strong>Esc</strong> to close` +
+        (filtered.length > 8 ? " · scroll for more" : "");
+
+      slashMenu.style.display = "block";
+
+      // Without this, arrowing past the visible window looks like the list ends.
+      const activeEl = items.querySelector(`[data-index="${slashActiveIndex}"]`);
+      if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+    }
+
+    // ==========================================================================
+    // @ file picker
+    //
+    // Same menu, same keys as the slash list — @ is just a second thing the input
+    // can be completing. Files come from the granted directories only: @ must not
+    // become a way to browse a filesystem the model was never given.
+    // ==========================================================================
+
+    let fileMatches = [];
+    let fileTokenStart = -1;
+    let fileSearchSeq = 0;
+
+    /** The `@word` the caret is currently inside, if any. */
+    function activeFileToken() {
+      const caret = promptInput.selectionStart ?? promptInput.value.length;
+      const before = promptInput.value.slice(0, caret);
+      const at = before.lastIndexOf("@");
+
+      if (at === -1) return null;
+      // Must start a word, so an email address does not open the picker.
+      if (at > 0 && !/\s/.test(before[at - 1])) return null;
+
+      const fragment = before.slice(at + 1);
+      if (/\s/.test(fragment)) return null;
+
+      return { start: at, query: fragment };
+    }
+
+    function renderFileMenu(files, query) {
+      fileMatches = files;
+      if (files.length === 0) { slashMenu.style.display = "none"; return; }
+
+      const items = document.getElementById("slash-menu-items");
+      items.innerHTML = "";
+
+      files.forEach((file, index) => {
+        const div = document.createElement("div");
+        const active = index === slashActiveIndex;
+        div.dataset.index = String(index);
+        div.style.cssText = `padding: 7px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--surface-2); font-size: 13px; background: ${active ? "var(--surface-2)" : "transparent"};`;
+        div.innerHTML =
+          `<span style="font-weight: bold; color: var(--accent); white-space: nowrap;">${escapeHtml(file.name)}</span>` +
+          `<span style="color: var(--text-muted); text-align: right; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(file.display)}</span>`;
+        div.addEventListener("mousedown", (ev) => { ev.preventDefault(); insertFile(index); });
+        div.addEventListener("mousemove", () => {
+          if (slashActiveIndex !== index) highlightMenuItem(index, false);
+        });
+        items.appendChild(div);
+      });
+
+      document.getElementById("slash-menu-footer").innerHTML =
+        `${files.length} file(s) · <strong>↑ ↓</strong> to browse · ` +
+        `<strong>Enter</strong> or <strong>Tab</strong> to insert · <strong>click</strong> to pick · ` +
+        `<strong>Esc</strong> to close`;
+
+      slashMenu.style.display = "block";
+      const activeEl = items.querySelector(`[data-index="${slashActiveIndex}"]`);
+      if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+    }
+
+    /** Replace the `@fragment` under the caret with the chosen path. */
+    function insertFile(index) {
+      const file = fileMatches[index];
+      if (!file || fileTokenStart < 0) return;
+
+      const caret = promptInput.selectionStart ?? promptInput.value.length;
+      const before = promptInput.value.slice(0, fileTokenStart);
+      const after = promptInput.value.slice(caret);
+
+      // The absolute path, because the model resolves it against granted
+      // directories rather than a working directory it cannot see.
+      const inserted = `${file.path} `;
+      promptInput.value = before + inserted + after;
+
+      const position = before.length + inserted.length;
+      promptInput.setSelectionRange(position, position);
+
+      slashMenu.style.display = "none";
+      fileMatches = [];
+      promptInput.focus();
+    }
+
+    async function updateFileMenu(token) {
+      fileTokenStart = token.start;
+      const seq = ++fileSearchSeq;
+
+      const { ok, body } = await safeJson(`/api/files?q=${encodeURIComponent(token.query)}`);
+      // A slower earlier request must not overwrite a newer one's results.
+      if (!ok || seq !== fileSearchSeq) return;
+      if (!activeFileToken()) return;
+
+      if ((body.files ?? []).length === 0 && body.roots === 0) {
+        document.getElementById("slash-menu-items").innerHTML =
+          `<div style="padding: 9px 12px; font-size: 12px; color: var(--warn-text);">` +
+          `No directories granted yet — add one in Settings → 📂 Directories.</div>`;
+        document.getElementById("slash-menu-footer").innerHTML = "<strong>Esc</strong> to close";
+        slashMenu.style.display = "block";
+        fileMatches = [];
+        return;
+      }
+
+      slashActiveIndex = 0;
+      renderFileMenu(body.files ?? [], token.query);
+    }
+
+    promptInput.addEventListener("input", (e) => {
+      const value = e.target.value;
+
+      const fileToken = activeFileToken();
+      if (fileToken) { updateFileMenu(fileToken); return; }
+
+      fileMatches = [];
+      fileTokenStart = -1;
+
+      if (!value.startsWith("/")) { slashMenu.style.display = "none"; return; }
+
+      const query = value.split(" ")[0].toLowerCase();
+      const filtered = Object.keys(COMMANDS).filter(
+        (name) => name.startsWith(query) || COMMANDS[name].description.toLowerCase().includes(query.slice(1))
+      );
+      slashActiveIndex = 0;
+      renderSlashMenu(filtered);
+    });
+
+    // ==========================================================================
+    // Prompt history — the same contract as a shell
+    //
+    // Up walks back through what you have sent, Down walks forward, and walking
+    // past the newest entry returns the half-typed line you started with rather
+    // than an empty box. Survives a reload, because losing a long prompt to an
+    // accidental refresh is exactly when you want it back.
+    // ==========================================================================
+
+    const HISTORY_KEY = "cullus.promptHistory";
+    const HISTORY_CAP = 200;
+
+    let promptHistory = [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      if (Array.isArray(saved)) promptHistory = saved.filter((s) => typeof s === "string");
+    } catch {
+      /* corrupt or unavailable storage is not worth breaking the input over */
+    }
+
+    // -1 means "not browsing": the input holds a live draft, not a recalled entry.
+    let historyIndex = -1;
+    let historyDraft = "";
+
+    function rememberPrompt(text) {
+      const value = String(text ?? "").trim();
+      if (!value) return;
+
+      // Re-running the same command repeatedly should not push everything else
+      // out of reach, so collapse an immediate repeat.
+      if (promptHistory[promptHistory.length - 1] !== value) {
+        promptHistory.push(value);
+        if (promptHistory.length > HISTORY_CAP) promptHistory = promptHistory.slice(-HISTORY_CAP);
+        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(promptHistory)); } catch { /* quota */ }
+      }
+
+      historyIndex = -1;
+      historyDraft = "";
+    }
+
+    /**
+     * Move through history. Returns true when the key was consumed, so an
+     * ArrowUp with nothing to recall still moves the caret like a normal input.
+     */
+    function recallHistory(direction) {
+      if (promptHistory.length === 0) return false;
+
+      if (historyIndex === -1) {
+        if (direction > 0) return false;      // Down with no history open: not ours.
+        historyDraft = promptInput.value;     // Stash the draft before leaving it.
+        historyIndex = promptHistory.length;
+      }
+
+      const next = historyIndex + direction;
+
+      if (next >= promptHistory.length) {
+        // Past the newest entry: hand the draft back, as a shell does.
+        historyIndex = -1;
+        promptInput.value = historyDraft;
+        historyDraft = "";
+      } else {
+        historyIndex = Math.max(0, next);
+        promptInput.value = promptHistory[historyIndex];
+      }
+
+      // Caret to the end — otherwise it sits at position 0 on a recalled line
+      // and the first keystroke edits the front of it.
+      requestAnimationFrame(() => {
+        const end = promptInput.value.length;
+        promptInput.setSelectionRange(end, end);
+      });
+      return true;
+    }
+
+    // Typing means you are composing, not browsing.
+    promptInput.addEventListener("input", () => { historyIndex = -1; });
+
+    promptInput.addEventListener("keydown", (e) => {
+      const fileMenuOpen = slashMenu.style.display === "block" && fileMatches.length > 0;
+      const menuOpen = !fileMenuOpen && slashMenu.style.display === "block" && slashFiltered.length > 0;
+
+      // The file picker owns the keys whenever it is the thing on screen.
+      if (fileMenuOpen) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const delta = e.key === "ArrowDown" ? 1 : -1;
+          highlightMenuItem((slashActiveIndex + delta + fileMatches.length) % fileMatches.length, true);
+          return;
+        }
+        if (e.key === "Tab" || e.key === "Enter") {
+          e.preventDefault();
+          insertFile(slashActiveIndex);
+          return;
+        }
+        if (e.key === "Escape") {
+          slashMenu.style.display = "none";
+          fileMatches = [];
+          return;
+        }
+      }
+
+      if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        highlightMenuItem((slashActiveIndex + delta + slashFiltered.length) % slashFiltered.length, true);
+        return;
+      }
+
+      if (menuOpen && e.key === "Tab") {
+        e.preventDefault();
+        promptInput.value = slashFiltered[slashActiveIndex] + " ";
+        slashMenu.style.display = "none";
+        return;
+      }
+
+      // Shell-style history. Only once the menus above have declined the key,
+      // so ArrowUp still means "previous command" in the slash menu.
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        if (recallHistory(e.key === "ArrowUp" ? -1 : 1)) e.preventDefault();
+        return;
+      }
+
+      if (e.key === "Escape") { slashMenu.style.display = "none"; return; }
+
+      if (e.key === "Enter") {
+        // Enter on a highlighted, incomplete command completes it instead of sending.
+        if (menuOpen && !promptInput.value.includes(" ")) {
+          const exact = slashFiltered.includes(promptInput.value.trim());
+          if (!exact) {
+            e.preventDefault();
+            promptInput.value = slashFiltered[slashActiveIndex] + " ";
+            slashMenu.style.display = "none";
+            return;
+          }
+        }
+        sendMessage();
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!slashMenu.contains(e.target) && e.target !== promptInput) {
+        slashMenu.style.display = "none";
+      }
+    });
+
+    document.getElementById("enable-pipeline-toggle").addEventListener("change", (e) => {
+      document.getElementById("pipeline-model-selectors").style.display =
+        e.target.checked ? "flex" : "none";
+    });
+
+    // ==========================================================================
+    // Data loading
+    // ==========================================================================
+
+    async function safeJson(url, options) {
+      try {
+        const res = await fetch(url, options);
+        const body = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, body };
+      } catch (err) {
+        return { ok: false, status: 0, body: { error: err.message } };
+      }
+    }
+
+    async function loadAvailableModels() {
+      const { body } = await safeJson("/api/models");
+      availableModels = body.models ?? [];
+
+      const banner = document.getElementById("health-banner");
+      const note = document.getElementById("model-note");
+
+      if (!body.running) {
+        banner.className = "banner error";
+        banner.innerHTML = `<strong>${escapeHtml(body.error ?? "Ollama is unreachable.")}</strong><br>${escapeHtml(body.hint ?? "")}`;
+      } else if (availableModels.length === 0) {
+        banner.className = "banner warn";
+        banner.innerHTML = `<strong>${escapeHtml(body.error ?? "No models pulled.")}</strong><br>${escapeHtml(body.hint ?? "")}`;
+      } else {
+        banner.className = "banner";
+        banner.innerHTML = "";
+      }
+
+      document.querySelectorAll(".model-dropdown").forEach((select) => {
+        const previous = select.value;
+        select.innerHTML = "";
+
+        if (availableModels.length === 0) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "No models available";
+          select.appendChild(opt);
+          return;
+        }
+
+        availableModels.forEach((model) => {
+          const opt = document.createElement("option");
+          opt.value = model;
+          opt.textContent = model;
+          select.appendChild(opt);
+        });
+
+        if (previous && availableModels.includes(previous)) select.value = previous;
+      });
+
+      if (availableModels.length > 0) {
+        const { body: config } = await safeJson("/api/config");
+        if (config.defaultModel && availableModels.includes(config.defaultModel)) {
+          document.getElementById("model-select").value = config.defaultModel;
+        }
+        note.innerText = `${availableModels.length} model(s) available`;
+      } else {
+        note.innerText = "Run: ollama pull qwen3.5:9b";
+      }
+    }
+
+    // The vault path is a field of the Obsidian connector now (Settings →
+    // Connections), so there is no sidebar element to read or refresh. Kept as a
+    // function because /vault and the Finder picker still drive it.
+    async function fetchVaultStatus() {
+      if (window.refreshConnections) await window.refreshConnections();
+    }
+
+    async function saveVault(explicitPath) {
+      const { ok, body } = await safeJson("/api/config/vault", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: (explicitPath ?? "").trim() }),
+      });
+
+      if (!ok) { appendSystem(`Could not set vault: ${escapeHtml(body.error ?? "unknown error")}`); return; }
+
+      await fetchVaultStatus();
+      appendSystem(body.vaultPath
+        ? `Vault set to <code>${escapeHtml(body.vaultPath)}</code>. Notes are served by <code>obsidian-live</code> over HTTPS from whichever vault Obsidian has open; this path is what the read-only guard protects from shell and filesystem writes.`
+        : "Vault cleared. Vault tools are disabled.");
+    }
+
+    // ==========================================================================
+    // API tokens
+    //
+    // There is no token UI here any more. Every credential is entered, shown and
+    // removed in Settings → Connections, via /api/connections — one place per
+    // connector, next to the thing it authenticates. Values are still write-only
+    // across the HTTP boundary: nothing on this page can read a stored token back.
+    // ==========================================================================
+
+    async function fetchMcpServers() {
+      const { body: servers } = await safeJson("/api/mcp/servers");
+      const container = document.getElementById("mcp-servers-list");
+      container.innerHTML = "";
+
+      if (!Array.isArray(servers) || servers.length === 0) {
+        container.innerHTML = "<span style='color:var(--text-muted);'>No MCP servers registered.</span>";
+        return;
+      }
+
+      servers.forEach((srv) => {
+        const item = document.createElement("div");
+        item.className = "mcp-item";
+        item.style.flexDirection = "column";
+        item.style.alignItems = "stretch";
+        item.style.gap = "6px";
+
+        const top = document.createElement("div");
+        top.style.cssText = "display:flex; justify-content:space-between; align-items:center; gap:8px;";
+        top.innerHTML = `<span>${srv.connected ? "🟢" : "⚪️"} ${escapeHtml(srv.name)}</span>`;
+
+        // Connect / disconnect
+        const power = document.createElement("label");
+        power.className = "switch";
+        power.title = srv.connected ? "Disconnect" : "Connect";
+        power.innerHTML = `<input type="checkbox" ${srv.connected ? "checked" : ""}><span class="slider round"></span>`;
+        power.querySelector("input").addEventListener("change", (e) =>
+          toggleMcp(srv.name, e.target.checked)
+        );
+        top.appendChild(power);
+
+        // Only user-added servers can be removed; built-ins have no Remove.
+        if (srv.custom) {
+          const remove = document.createElement("button");
+          remove.className = "secondary";
+          remove.textContent = "🗑";
+          remove.title = "Remove this server";
+          remove.style.cssText = "padding:2px 7px; font-size:10px; background:transparent; flex:none;";
+          remove.addEventListener("click", async () => {
+            if (!confirm(`Remove the "${srv.name}" server? Its tools stop being available.`)) return;
+            const { body } = await safeJson(`/api/mcp/custom/${encodeURIComponent(srv.name)}`, { method: "DELETE" });
+            appendSystem(escapeHtml(body.message ?? "Removed."));
+            await fetchMcpServers();
+            if (window.refreshConnections) window.refreshConnections();
+          });
+          top.appendChild(remove);
+        }
+
+        item.appendChild(top);
+
+        if (srv.unavailableReason) {
+          const why = document.createElement("div");
+          why.style.cssText = "font-size: 10px; color: var(--warn-text);";
+          why.textContent = srv.unavailableReason;
+          item.appendChild(why);
+        }
+
+        // Read-only / read-write mode switch
+        if (srv.supportsReadOnly) {
+          const modeRow = document.createElement("div");
+          modeRow.style.cssText = "display:flex; gap:4px; align-items:center;";
+
+          const makeButton = (label, readOnly, title) => {
+            const button = document.createElement("button");
+            const active = srv.readOnly === readOnly;
+            button.textContent = label;
+            button.title = title;
+            button.style.cssText =
+              `flex:1; padding:4px 6px; font-size:10px; font-weight:bold; border-radius:4px; cursor:pointer; border:1px solid ${active ? "transparent" : "var(--surface-3)"};` +
+              (active
+                ? `background:${readOnly ? "var(--ok)" : "var(--warn)"}; color:var(--surface-0);`
+                : "background:var(--surface-0); color:var(--text-muted);");
+            button.disabled = active;
+            if (!active) button.addEventListener("click", () => setMcpMode(srv.name, readOnly, label));
+            return button;
+          };
+
+          modeRow.appendChild(
+            makeButton("🔒 Read-only", true, "Model can read notes but never create, edit or delete")
+          );
+          modeRow.appendChild(
+            makeButton("✏️ Read-write", false, "Model can create, edit, move and DELETE notes")
+          );
+          item.appendChild(modeRow);
+        }
+
+        container.appendChild(item);
+      });
+    }
+
+    async function setMcpMode(name, readOnly, label) {
+      // Writing to a real vault is the dangerous direction — confirm it explicitly.
+      if (!readOnly) {
+        const detail = name === "filesystem"
+          ? "The model will be able to create, edit, move and DELETE files in every directory " +
+          "you have granted — listed under Accessible Directories below."
+          : name === "obsidian-live"
+            ? "The model will be able to create, edit and DELETE notes in whichever vault Obsidian " +
+            "currently has open, and run Obsidian commands."
+            : "The model will be able to create, edit, move and DELETE data on this server.";
+
+        const ok = confirm(
+          `Give "${name}" READ-WRITE access?\n\n${detail}\n\n` +
+          `On smaller models this is genuinely risky.\n\nContinue?`
+        );
+        if (!ok) return;
+      }
+
+      const { ok, body } = await safeJson("/api/mcp/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, readOnly }),
+      });
+
+      if (!ok || !body.success) {
+        appendSystem(`Could not switch <code>${escapeHtml(name)}</code> to ${escapeHtml(label)}: ${escapeHtml(body.error ?? "unknown error")}`);
+      } else {
+        appendSystem(`<code>${escapeHtml(name)}</code> is now <strong>${readOnly ? "read-only" : "READ-WRITE"}</strong>. Server restarted.`);
+      }
+
+      await fetchMcpServers();
+    }
+
+    async function fetchAllowedPaths() {
+      const { body: paths } = await safeJson("/api/mcp/paths");
+      const container = document.getElementById("allowed-paths-list");
+      container.innerHTML = "";
+
+      if (!Array.isArray(paths) || paths.length === 0) {
+        container.innerHTML = "<span style='color:var(--text-muted);'>No directories configured.</span>";
+        return;
+      }
+
+      paths.forEach((p) => {
+        const item = document.createElement("div");
+        item.style.cssText = "display: flex; justify-content: space-between; align-items: center; gap: 6px; background: var(--surface-0); padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; word-break: break-all;";
+        item.innerHTML = `<span>${escapeHtml(p)}</span>`;
+
+        const button = document.createElement("button");
+        button.textContent = "✕";
+        button.style.cssText = "background: var(--danger); border: none; color: white; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 10px; flex: none;";
+        button.addEventListener("click", () => removePath(p));
+
+        item.appendChild(button);
+        container.appendChild(item);
+      });
+    }
+
+    // ==========================================================================
+    // Native Finder picker
+    // ==========================================================================
+
+    async function chooseDirectory(prompt) {
+      const { ok, body } = await safeJson("/api/system/choose-directory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+
+      if (body.cancelled) return null;
+
+      if (!ok || !body.success) {
+        appendSystem(
+          `${escapeHtml(body.error ?? "Folder picker unavailable.")} ` +
+          `${escapeHtml(body.hint ?? "Type the path into the field instead.")}`
+        );
+        return null;
+      }
+
+      return body.path;
+    }
+
+    async function browseForPath() {
+      const chosen = await chooseDirectory("Choose a directory to grant the assistant access to");
+      if (!chosen) return;
+      document.getElementById("new-path-input").value = chosen;
+      await addPath();
+    }
+
+    async function browseForVault() {
+      const chosen = await chooseDirectory("Choose your Obsidian vault folder");
+      if (!chosen) return;
+      await saveVault(chosen);
+    }
+
+    async function addPath(explicitPath) {
+      const input = document.getElementById("new-path-input");
+      const dirPath = (explicitPath ?? input.value).trim();
+      if (!dirPath) return;
+
+      const { ok, body } = await safeJson("/api/mcp/paths/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dirPath }),
+      });
+
+      if (!ok) { appendSystem(`Could not add path: ${escapeHtml(body.error ?? "unknown error")}`); return; }
+
+      input.value = "";
+      await Promise.all([fetchAllowedPaths(), fetchMcpServers()]);
+    }
+
+    async function removePath(dirPath) {
+      const { ok, body } = await safeJson("/api/mcp/paths/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dirPath }),
+      });
+
+      if (!ok) { appendSystem(`Could not remove path: ${escapeHtml(body.error ?? "unknown error")}`); return; }
+
+      await Promise.all([fetchAllowedPaths(), fetchMcpServers()]);
+    }
+
+    async function toggleMcp(name, enable) {
+      const { ok, body } = await safeJson("/api/mcp/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, enable }),
+      });
+
+      if (!ok) appendSystem(`Could not toggle ${escapeHtml(name)}: ${escapeHtml(body.error ?? "unknown error")}`);
+      await fetchMcpServers();
+    }
+
+    // ==========================================================================
+    // Slash command implementations
+    // ==========================================================================
+
+    function cmdHelp() {
+      const rows = Object.entries(COMMANDS)
+        .map(([name, def]) => `<tr><td style="padding:2px 12px 2px 0;color:var(--accent);font-weight:bold;white-space:nowrap;">${escapeHtml(name)}</td><td style="padding:2px 0;color:var(--text-secondary);">${escapeHtml(def.description)}</td></tr>`)
+        .join("");
+      appendSystem(
+        `<strong>Commands</strong> — ↑/↓ to browse, Tab to complete.<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+        `<div style="margin-top:8px;color:var(--text-muted);">Anything not starting with <code>/</code> goes to the model.</div>`
+      );
+    }
+
+    async function cmdStatus() {
+      const { body } = await safeJson("/api/health");
+      const ollama = body.ollama ?? {};
+      const servers = (body.mcpServers ?? [])
+        .map((s) => `${s.connected ? "🟢" : "⚪️"} ${escapeHtml(s.name)}`)
+        .join(", ") || "none registered";
+
+      appendSystem(
+        `<strong>Ollama</strong>: ${ollama.running ? "🟢 running" : "🔴 unreachable"} at <code>${escapeHtml(ollama.url ?? "?")}</code><br>` +
+        `<strong>Models</strong>: ${ollama.models?.length ? escapeHtml(ollama.models.join(", ")) : "none pulled"}<br>` +
+        `<strong>Vault</strong>: ${body.vaultPath ? `<code>${escapeHtml(body.vaultPath)}</code>` : "not set"}<br>` +
+        `<strong>MCP</strong>: ${servers}<br>` +
+        `<strong>Session</strong>: ${fmt(body.session?.totalTokens)} tokens over ${fmt(body.session?.turns)} turn(s)` +
+        (ollama.error ? `<br><span style="color:var(--warn-text);">${escapeHtml(ollama.error)} ${escapeHtml(ollama.hint ?? "")}</span>` : "")
+      );
+    }
+
+    async function cmdModels() {
+      await loadAvailableModels();
+      appendSystem(
+        availableModels.length
+          ? `<strong>Available models</strong><br>${availableModels.map((m) => `<code>${escapeHtml(m)}</code>`).join(" ")}`
+          : "No models pulled. Run <code>ollama pull qwen3.5:9b</code>."
+      );
+    }
+
+    async function cmdModel(args) {
+      if (!args) {
+        appendSystem(
+          `Active model: <code>${escapeHtml(document.getElementById("model-select").value || "none")}</code><br>` +
+          `Switch with <code>/model &lt;tag&gt;</code>. Available: ${availableModels.map((m) => `<code>${escapeHtml(m)}</code>`).join(" ") || "none"}`
+        );
+        return;
+      }
+
+      if (!availableModels.includes(args)) {
+        appendSystem(`<code>${escapeHtml(args)}</code> isn't pulled. Available: ${availableModels.map((m) => `<code>${escapeHtml(m)}</code>`).join(" ") || "none"}`);
+        return;
+      }
+
+      document.getElementById("model-select").value = args;
+      await safeJson("/api/config/model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: args }),
+      });
+      appendSystem(`Active model is now <code>${escapeHtml(args)}</code>.`);
+    }
+
+    // Opens the popup rather than printing the list into the transcript. With
+    // several MCP servers connected the printed version was dozens of lines you
+    // then scrolled past for the rest of the session.
+    async function cmdTools() {
+      if (typeof window.openToolsMenu === "function") {
+        await window.openToolsMenu();
+        return;
+      }
+      // Fallback if the popup script failed to load: better a wall of text than
+      // a command that silently does nothing.
+      const { body } = await safeJson("/api/tools");
+      const tools = body.tools ?? [];
+      if (tools.length === 0) {
+        appendSystem("No tools are currently available.");
+        return;
+      }
+      appendSystem(
+        `<strong>${tools.length} tool(s) available</strong><br>` +
+        tools.map((t) => `<code>${escapeHtml(t.name)}</code> — ${escapeHtml(t.description ?? "")}`).join("<br>")
+      );
+    }
+
+    // Adding functionality without touching TypeScript: a recipe note becomes a
+    // callable tool. Pipe-separated because a command contains spaces, quotes and
+    // flags, and any cleverer parsing would fight the thing being typed.
+    async function cmdNewTool(args) {
+      const parts = String(args ?? "").split("|").map((p) => p.trim());
+
+      if (parts.length < 3 || parts.some((p) => !p)) {
+        appendSystem(
+          `<strong>/newtool</strong> turns a command you keep re-typing into a tool the ` +
+          `assistant can call.<br><br>` +
+          `<code>/newtool &lt;name&gt; | &lt;what it does&gt; | &lt;command&gt;</code><br><br>` +
+          `<strong>Example</strong><br>` +
+          `<code>/newtool rebuild | rebuild the assistant from source | npm run build</code><br><br>` +
+          `That creates the tool <code>recipe_rebuild</code>. The description is what the model ` +
+          `reads when deciding whether to use it, so describe the task rather than the command.` +
+          `<br><br>The model chooses <em>whether</em> to run it — never what the command says. ` +
+          `Recipes live as notes in your vault's recipes folder; edit or delete the note to change ` +
+          `or remove the tool.`
+        );
+        return;
+      }
+
+      const [name, description, ...rest] = parts;
+      // Rejoin: a command may legitimately contain a pipe.
+      const command = rest.join(" | ");
+
+      const { ok, body } = await safeJson("/api/recipes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, command }),
+      });
+
+      if (!ok) {
+        appendSystem(`Could not create the tool: ${escapeHtml(body.error ?? "unknown error")}`);
+        return;
+      }
+
+      appendSystem(
+        `Created <code>${escapeHtml(body.toolName)}</code> → <code>${escapeHtml(command)}</code>` +
+        `<br><span style="color:var(--text-muted);">Saved to ${escapeHtml(body.vaultPath)}. ` +
+        `Callable from your next message — no restart.</span>`
+      );
+    }
+
+    async function cmdMcp() {
+      const { body: servers } = await safeJson("/api/mcp/servers");
+      if (!Array.isArray(servers) || servers.length === 0) {
+        appendSystem("No MCP servers registered.");
+        return;
+      }
+      appendSystem(
+        "<strong>MCP servers</strong><br>" +
+        servers.map((s) => {
+          const mode = s.supportsReadOnly ? (s.readOnly ? " · 🔒 read-only" : " · ✏️ READ-WRITE") : "";
+          const why = s.unavailableReason ? ` — ${escapeHtml(s.unavailableReason)}` : "";
+          return `${s.connected ? "🟢" : "⚪️"} <code>${escapeHtml(s.name)}</code> — ${s.connected ? "connected" : "disconnected"}${mode}${why}`;
+        }).join("<br>")
+      );
+    }
+
+    // /fix lives in js/fix.js: it is a command, not a panel, and that module owns
+    // parsing, the target list and the completion message.
+    async function cmdFix(args) {
+      if (!window.runFixCommand) {
+        appendSystem("The repair module failed to load. Reload the page.");
+        return;
+      }
+      await window.runFixCommand(args);
+    }
+
+    function cmdSettings() {
+      if (window.openSettings) window.openSettings("connections");
+      else appendSystem("Settings failed to load. Reload the page.");
+    }
+
+    async function cmdVault(args) {
+      if (args.startsWith("set ")) {
+        await saveVault(args.slice(4).trim());
+        return;
+      }
+      if (args === "clear") {
+        await saveVault("");
+        return;
+      }
+      if (args === "browse") { await browseForVault(); return; }
+
+      const { body } = await safeJson("/api/config");
+      appendSystem(
+        body.vaultPath
+          ? `Vault: <code>${escapeHtml(body.vaultPath)}</code><br>Change it with <code>/vault set &lt;path&gt;</code>, <code>/vault browse</code>, or <code>/vault clear</code>.`
+          : `No vault configured — vault tools are disabled.<br>Set one with <code>/vault set &lt;path&gt;</code> or <code>/vault browse</code>.`
+      );
+    }
+
+    async function cmdPaths(args) {
+      if (args.startsWith("add ")) { await addPath(args.slice(4).trim()); await cmdPaths(""); return; }
+      if (args.startsWith("remove ")) { await removePath(args.slice(7).trim()); await cmdPaths(""); return; }
+
+      const { body: paths } = await safeJson("/api/mcp/paths");
+      appendSystem(
+        Array.isArray(paths) && paths.length
+          ? `<strong>Accessible directories</strong><br>${paths.map((p) => `<code>${escapeHtml(p)}</code>`).join("<br>")}`
+          : "No directories configured. Add one with <code>/paths add &lt;path&gt;</code> or <code>/browse</code>."
+      );
+    }
+
+    async function cmdBrowse() { await browseForPath(); }
+
+    // Make a project recoverable before a destructive run. With no argument this
+    // surveys every granted directory and does nothing else — the survey is the
+    // point, because the answer is usually "one of these is unprotected and you
+    // did not know".
+    async function cmdGitInit(args) {
+      const target = (args ?? "").trim();
+
+      if (!target) {
+        const { body } = await safeJson("/api/git/baseline");
+        const projects = body.projects ?? [];
+
+        if (projects.length === 0) {
+          appendSystem("No granted directories to check. Add one with <code>/paths add &lt;path&gt;</code>.");
+          return;
+        }
+
+        const rows = projects.map((p) => {
+          const unity = p.unity ? " 🎮" : "";
+          if (!p.repo) {
+            return `<tr><td style="padding:3px 10px 3px 0;">🔴</td>` +
+              `<td style="padding:3px 12px 3px 0;font-weight:bold;">${escapeHtml(p.label)}${unity}</td>` +
+              `<td style="color:var(--text-secondary);">Not a repository — nothing to revert to. ` +
+              `<code>/gitinit ${escapeHtml(p.root)}</code></td></tr>`;
+          }
+
+          const dirty = p.dirtyCount
+            ? `<span style="color:var(--warn-text);">${p.dirtyCount} uncommitted</span>`
+            : `<span style="color:var(--ok);">clean</span>`;
+          const ignore = p.unity && !p.hasGitignore
+            ? ` <span style="color:var(--warn-text);">· no .gitignore</span>`
+            : "";
+
+          return `<tr><td style="padding:3px 10px 3px 0;">${p.dirtyCount ? "🟡" : "🟢"}</td>` +
+            `<td style="padding:3px 12px 3px 0;font-weight:bold;">${escapeHtml(p.label)}${unity}</td>` +
+            `<td style="color:var(--text-secondary);">${escapeHtml(p.branch ?? "no branch")} · ` +
+            `${p.commits ?? 0} commit(s) · ${dirty}${ignore}</td></tr>`;
+        }).join("");
+
+        appendSystem(
+          `<strong>Version control</strong> — what you could undo right now.` +
+          `<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+          `<div style="margin-top:8px;color:var(--text-muted);">` +
+          `<code>/gitinit &lt;path&gt;</code> initialises a repository and commits a baseline. ` +
+          `An existing repository is never modified.</div>`
+        );
+        return;
+      }
+
+      appendSystem(`Checking <code>${escapeHtml(target)}</code>…`);
+      const { ok, body } = await safeJson("/api/git/baseline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: target }),
+      });
+
+      if (!ok) {
+        appendSystem(
+          `<strong>${escapeHtml(body.error ?? "Could not create a baseline.")}</strong>` +
+          (body.actionRequired ? `<div style="margin-top:4px;color:var(--warn-text);">${escapeHtml(body.actionRequired)}</div>` : "")
+        );
+        return;
+      }
+
+      const icon = body.action === "committed-baseline" ? "🟢" : body.action === "already-a-repo" ? "🔵" : "🟡";
+      appendSystem(
+        `${icon} ${escapeHtml(body.message)}` +
+        (body.warning ? `<div style="margin-top:6px;color:var(--warn-text);">⚠️ ${escapeHtml(body.warning)}</div>` : "") +
+        (body.commit ? `<div style="margin-top:6px;color:var(--text-muted);">Undo anything after this with <code>/undo</code>.</div>` : "")
+      );
+    }
+
+    // `--target <path>` pulled out of free text, so a label can be free text
+    // too. /snapshot takes a label and /undo takes nothing, and neither should
+    // make the user think about which argument is which.
+    function splitTarget(args) {
+      const raw = (args ?? "").trim();
+      const match = raw.match(/--target\s+(\S+)/);
+      const force = /--force\b/.test(raw);
+      const rest = raw.replace(/--target\s+\S+/, "").replace(/--force\b/g, "").trim();
+      return { target: match ? match[1] : "", force, rest };
+    }
+
+    function renderProjectAmbiguity(body) {
+      appendSystem(
+        `<strong>${escapeHtml(body.error ?? "Ambiguous project.")}</strong>` +
+        `<div style="margin-top:4px;color:var(--warn-text);">${escapeHtml(body.actionRequired ?? "")}</div>`
+      );
+    }
+
+    async function cmdSnapshot(args) {
+      const { target, rest } = splitTarget(args);
+      const { ok, body } = await safeJson("/api/git/snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(target ? { path: target } : {}), label: rest }),
+      });
+
+      if (!ok) { renderProjectAmbiguity(body); return; }
+
+      const icon = body.action === "snapshotted" ? "📸" : "🔵";
+      appendSystem(
+        `${icon} ${escapeHtml(body.message)}` +
+        (body.action === "snapshotted"
+          ? `<div style="margin-top:6px;color:var(--text-muted);">Run your test, then <code>/undo</code> to come back here.</div>`
+          : "")
+      );
+    }
+
+    async function cmdUndo(args) {
+      const { target, force } = splitTarget(args);
+      const { ok, body } = await safeJson("/api/git/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(target ? { path: target } : {}), force }),
+      });
+
+      if (!ok) {
+        appendSystem(
+          `<strong>${escapeHtml(body.error ?? "Could not undo.")}</strong>` +
+          (body.actionRequired ? `<div style="margin-top:4px;white-space:pre-wrap;color:var(--warn-text);">${escapeHtml(body.actionRequired)}</div>` : "")
+        );
+        return;
+      }
+
+      const icon = body.action === "undone" ? "↩️" : "🔵";
+      appendSystem(
+        `${icon} ${escapeHtml(body.message)}` +
+        (body.warning ? `<div style="margin-top:6px;color:var(--warn-text);">⚠️ ${escapeHtml(body.warning)}</div>` : "")
+      );
+    }
+
+    // Run a build prompt in a clean session.
+    //
+    // /unity ends by telling you to paste its prompt into a NEW chat, and that
+    // instruction is load-bearing rather than tidy: the planning conversation
+    // says "build nothing, edit no files", so pasting a build prompt into it
+    // leaves the model holding two incompatible tasks. Measured once — it spent
+    // six rounds and 780,000 tokens re-reading the same four scripts, because
+    // reading was the only action both instructions permitted.
+    //
+    // Telling the user to open a new chat put the burden on them at exactly the
+    // wrong moment. This does it for them.
+    async function cmdBuild(args) {
+      const model = document.getElementById("model-select").value;
+      if (!model) {
+        appendMessage("Error", "No model is selected.", "error-msg");
+        return;
+      }
+
+      let prompt = (args ?? "").trim();
+
+      // No argument: lift the fenced prompt out of the last plan on screen, so
+      // the normal path is two words rather than a copy-paste.
+      if (!prompt) {
+        const blocks = [...document.querySelectorAll("#chat-box pre code, #chat-box pre")]
+          .map((el) => el.innerText ?? el.textContent ?? "")
+          .filter((text) => /^\s*Role:/m.test(text));
+
+        prompt = blocks.length > 0 ? blocks[blocks.length - 1].trim() : "";
+
+        if (!prompt) {
+          appendSystem(
+            "No build prompt found in this chat. Run <code>/unity &lt;your idea&gt;</code> first, " +
+            "or paste the prompt yourself: <code>/build &lt;the whole prompt&gt;</code>."
+          );
+          return;
+        }
+      }
+
+      // The new session is what makes this different from just sending the text.
+      const { ok } = await safeJson("/api/sessions", { method: "POST" });
+      if (!ok) {
+        appendSystem(
+          "Could not start a new chat, so the build prompt was not sent — running it in this " +
+          "one would fight the planning instructions already in the history. Try the + button " +
+          "in the sidebar, then paste the prompt."
+        );
+        return;
+      }
+
+      document.getElementById("chat-box").innerHTML = "";
+      updateContextMeter({ promptTokens: 0, completionTokens: 0, contextLength: 1 });
+      lastContextLength = 0;
+      document.getElementById("context-label").innerText = "—";
+      if (typeof window.refreshSessions === "function") window.refreshSessions();
+
+      appendSystem(
+        `Started a clean chat for the build, so the planning conversation cannot contradict it. ` +
+        `Snapshot first with <code>/snapshot before build</code> if you have not — ` +
+        `<code>/undo</code> then reverts whatever this does.`
+      );
+      appendPlain("You", prompt, "user-msg");
+
+      setStatus("Working...");
+      socket.emit("send-message", { prompt, model });
+    }
+
+    async function cmdSnapshots(args) {
+      const { target } = splitTarget(args);
+      const query = target ? `?path=${encodeURIComponent(target)}` : "";
+      const { ok, body } = await safeJson(`/api/git/snapshots${query}`);
+
+      if (!ok) { renderProjectAmbiguity(body); return; }
+
+      const snapshots = body.snapshots ?? [];
+      if (snapshots.length === 0) {
+        appendSystem(
+          `No snapshots in <code>${escapeHtml(body.root ?? "")}</code>. ` +
+          `Make one with <code>/snapshot &lt;label&gt;</code>.`
+        );
+        return;
+      }
+
+      const rows = snapshots.map((s) =>
+        `<tr><td style="padding:2px 10px 2px 0;">${s.ahead === 0 ? "👉" : ""}</td>` +
+        `<td style="padding:2px 10px 2px 0;color:var(--accent);font-family:monospace;">${escapeHtml(s.sha)}</td>` +
+        `<td style="padding:2px 12px 2px 0;color:var(--text-secondary);">${escapeHtml(s.subject)}</td>` +
+        `<td style="color:var(--text-muted);">${s.ahead === 0 ? "current" : `${s.ahead} commit(s) back`}</td></tr>`
+      ).join("");
+
+      appendSystem(
+        `<strong>Snapshots</strong> — <code>${escapeHtml(body.root ?? "")}</code>` +
+        `<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+        `<div style="margin-top:8px;color:var(--text-muted);"><code>/undo</code> returns to the newest one.</div>`
+      );
+    }
+
+    async function cmdTokens() {
+      const { body } = await safeJson("/api/session/usage");
+      updateSessionUsage(body);
+      appendSystem(
+        `<strong>Session tokens</strong><br>` +
+        `Input: ${fmt(body.promptTokens)}<br>` +
+        `Output: ${fmt(body.completionTokens)}<br>` +
+        `Total: ${fmt(body.totalTokens)} across ${fmt(body.turns)} turn(s)`
+      );
+    }
+
+    function cmdClear() {
+      document.getElementById("chat-box").innerHTML = "";
+      appendSystem("Transcript cleared. Model history and token counters are unchanged — use <code>/reset</code> for a full reset.");
+    }
+
+    async function cmdReset() {
+      const { ok, body } = await safeJson("/api/session/reset", { method: "POST" });
+      document.getElementById("chat-box").innerHTML = "";
+      safeJson("/api/activity", { method: "DELETE" });
+
+      if (ok) {
+        updateContextMeter({ promptTokens: 0, completionTokens: 0, contextLength: 1 });
+        lastContextLength = 0;
+        updateSessionUsage(body.session);
+        document.getElementById("context-label").innerText = "—";
+        appendSystem("Session reset: transcript, model history, token counters and scratchpad all cleared.");
+      } else {
+        appendSystem("Reset failed on the server; the transcript was cleared locally only.");
+      }
+    }
+
+    function cmdPipeline(args) {
+      const toggle = document.getElementById("enable-pipeline-toggle");
+      const trimmed = (args ?? "").trim();
+
+      // `/pipeline workers 4` and `/pipeline mode fanout|roles` drive the same
+      // controls the sidebar does, so the command and the panel cannot disagree.
+      const workerArg = trimmed.match(/^workers?\s+(\d+)$/i);
+      if (workerArg) {
+        const slider = document.getElementById("worker-count");
+        const value = Math.min(Math.max(Number(workerArg[1]), 1), Number(slider.max) || 8);
+        slider.value = value;
+        slider.dispatchEvent(new Event("input"));
+        slider.dispatchEvent(new Event("change"));
+        if (!toggle.checked) {
+          toggle.checked = true;
+          toggle.dispatchEvent(new Event("change"));
+        }
+        appendSystem(
+          `Fan-out set to <strong>${value} worker(s)</strong>. ` +
+          document.getElementById("worker-estimate").innerHTML
+        );
+        return;
+      }
+
+      const modeArg = trimmed.match(/^mode\s+(fanout|roles)$/i);
+      if (modeArg) {
+        const wanted = modeArg[1].toLowerCase();
+        const radio = document.querySelector(`input[name="pipeline-mode"][value="${wanted}"]`);
+        if (radio) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change"));
+        }
+        appendSystem(
+          wanted === "fanout"
+            ? "Mode: <strong>split tasks across N workers</strong> on one model."
+            : "Mode: <strong>different model per role</strong> (triage → engineer → manager)."
+        );
+        return;
+      }
+
+      if (trimmed) {
+        appendSystem(
+          "Usage: <code>/pipeline</code> to toggle, <code>/pipeline workers &lt;1-8&gt;</code>, " +
+          "or <code>/pipeline mode fanout|roles</code>."
+        );
+        return;
+      }
+
+      toggle.checked = !toggle.checked;
+      toggle.dispatchEvent(new Event("change"));
+      appendSystem(
+        `Multi-agent pipeline is now <strong>${toggle.checked ? "ON" : "OFF"}</strong>` +
+        (toggle.checked
+          ? ` — mode <code>${window.pipelineMode ? window.pipelineMode() : "roles"}</code>, ` +
+          `${window.workerCount ? window.workerCount() : 1} worker(s).`
+          : ".")
+      );
+    }
+
+    // ==========================================================================
+    // Session-switch commands
+    // ==========================================================================
+
+    async function patchSettings(patch) {
+      const { ok, body } = await safeJson("/api/session/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!ok) {
+        appendSystem(`Could not apply setting: ${escapeHtml(body.error ?? "unknown error")}`);
+        return null;
+      }
+      renderModeChips(body.settings);
+      return body.settings;
+    }
+
+    async function cmdEffort(args) {
+      const { body } = await safeJson("/api/session/settings");
+
+      if (!args) {
+        const rows = (body.effortLevels ?? [])
+          .map((l) => `<tr><td style="padding:2px 12px 2px 0;color:var(--accent);font-weight:bold;">${escapeHtml(l.level)}${l.level === body.settings.effort ? " ←" : ""}</td><td style="color:var(--text-secondary);">${escapeHtml(l.description)}</td></tr>`)
+          .join("");
+        appendSystem(
+          `Effort is <strong>${escapeHtml(body.settings.effort)}</strong>. Change with <code>/effort low|medium|high</code>.` +
+          `<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+          `<div style="margin-top:6px;color:var(--text-muted);">Ollama has no "effort" dial, so this maps onto thinking mode, a generation cap, and the tool-step budget.</div>`
+        );
+        return;
+      }
+
+      const level = args.trim().toLowerCase();
+      if (!["low", "medium", "high"].includes(level)) {
+        appendSystem(`Effort must be <code>low</code>, <code>medium</code> or <code>high</code>.`);
+        return;
+      }
+
+      const settings = await patchSettings({ effort: level });
+      if (settings) {
+        const profile = (await safeJson("/api/session/settings")).body.effortLevels.find((l) => l.level === level);
+        appendSystem(`Effort set to <strong>${escapeHtml(level)}</strong> — ${escapeHtml(profile?.description ?? "")}`);
+      }
+    }
+
+    /**
+     * How much polish to build to. Deliberately a sibling of cmdEffort, because
+     * the two are constantly confused and the shared shape is the cheapest way
+     * to say "same kind of knob, different question".
+     */
+    async function cmdFidelity(args) {
+      const { body } = await safeJson("/api/session/settings");
+      const levels = body.fidelityLevels ?? [];
+
+      if (!args) {
+        const rows = levels
+          .map((l) => `<tr><td style="padding:2px 12px 2px 0;color:var(--accent);font-weight:bold;">${escapeHtml(l.level)}${l.level === body.settings.fidelity ? " ←" : ""}</td><td style="color:var(--text-secondary);">${escapeHtml(l.description)}</td></tr>`)
+          .join("");
+        appendSystem(
+          `Fidelity is <strong>${escapeHtml(body.settings.fidelity)}</strong>. Change with <code>/fidelity blockout|playable|production</code>.` +
+          `<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+          `<div style="margin-top:6px;color:var(--text-muted);">This is how much polish to build, not how hard to think — that's <code>/effort</code>.</div>`
+        );
+        return;
+      }
+
+      const level = args.trim().toLowerCase();
+      const names = levels.map((l) => l.level);
+      if (!names.includes(level)) {
+        appendSystem(`Fidelity must be one of: ${names.map((n) => `<code>${escapeHtml(n)}</code>`).join(", ")}.`);
+        return;
+      }
+
+      const settings = await patchSettings({ fidelity: level });
+      if (!settings) return;
+
+      const profile = levels.find((l) => l.level === level);
+      let note = `Fidelity set to <strong>${escapeHtml(level)}</strong> — ${escapeHtml(profile?.description ?? "")}`;
+
+      // The one pairing that cannot be satisfied: production asks for several
+      // turns of work, effort=low caps the turn at six tool steps. Said here
+      // rather than only in /doctor, because this is the moment it is created.
+      if (settings.effort === "low" && level === "production") {
+        note +=
+          `<div style="margin-top:6px;color:var(--warn);">Heads up: <code>/effort low</code> allows only 6 tool steps, ` +
+          `which cannot deliver production fidelity. Raise it with <code>/effort medium</code> or <code>/effort high</code>.</div>`;
+      }
+
+      appendSystem(note);
+    }
+
+    // Every word a person reaches for when they want the goal to stop. One of
+    // them being missing is indistinguishable, from the chair, from the goal
+    // being unclearable — which is exactly how this read before.
+    const GOAL_OFF_WORDS = ["clear", "off", "stop", "none", "cancel", "done", "reset", "remove", "drop"];
+
+    async function cmdGoal(args) {
+      const word = args.trim().toLowerCase();
+
+      if (GOAL_OFF_WORDS.includes(word)) {
+        await clearGoal();
+        return;
+      }
+
+      if (!args) {
+        const { body } = await safeJson("/api/session/settings");
+        appendSystem(
+          body.settings.goal
+            ? `Current goal: <em>${escapeHtml(body.settings.goal)}</em><br>Restart work on it with <code>/goal go</code>, or drop it with <code>/goal off</code> (also: <code>clear</code>, <code>stop</code>, <code>none</code>) — or click the 🎯 chip above.`
+            : `No goal set. Set one with <code>/goal &lt;what you want achieved&gt;</code> — the model starts on it immediately. <code>/goal off</code> drops it again.`
+        );
+        return;
+      }
+
+      // "/goal go" resumes the standing goal without redefining it, for when a
+      // tangent has taken the conversation somewhere else.
+      if (args.trim().toLowerCase() === "go") {
+        const { body } = await safeJson("/api/session/settings");
+        if (!body?.settings?.goal) {
+          appendSystem("No goal set yet. <code>/goal &lt;what you want achieved&gt;</code> sets one and starts work.");
+          return;
+        }
+        startGoalWork(body.settings.goal, "Resuming the goal");
+        return;
+      }
+
+      const settings = await patchSettings({ goal: args });
+      if (!settings) return;
+
+      // Setting a goal used to be inert: the chip appeared and the model sat
+      // waiting for an unrelated prompt to attach the goal to. A goal is a request
+      // to get on with something, so the turn starts here.
+      startGoalWork(args, "Goal set");
+    }
+
+    /** Drop the standing goal. Shared by /goal off and the 🎯 chip. */
+    async function clearGoal() {
+      const settings = await patchSettings({ goal: null });
+      if (settings && !settings.goal) {
+        appendSystem("Goal cleared. Nothing is standing over the conversation now.");
+      }
+    }
+    window.clearGoal = clearGoal;
+
+    /** Announce a goal and immediately dispatch a turn that works on it. */
+    function startGoalWork(goal, headline) {
+      const model = document.getElementById("model-select").value;
+      appendSystem(
+        `${headline}: <em>${escapeHtml(goal)}</em><br>` +
+        (model
+          ? `Starting work now. Press <strong>Stop</strong> to interrupt; <code>/goal off</code> drops it for good.`
+          : `No model selected, so nothing started. Pick one, then run <code>/goal go</code>.`)
+      );
+      if (!model) return;
+
+      setStatus("Working...");
+      socket.emit("send-message", {
+        model,
+        prompt:
+          `Start working on the standing goal now: ${goal}\n\n` +
+          `Take the first concrete step yourself with tools — do not reply with a plan and wait ` +
+          `for approval. If you need a decision that only I can make, use the ask_user tool. ` +
+          `If the goal needs more than one turn, end with the continuation marker and you will ` +
+          `be resumed automatically.`,
+      });
+    }
+
+    async function cmdContinue(args) {
+      const wanted = args.trim().toLowerCase();
+      const { body } = await safeJson("/api/session/settings");
+      const current = body?.settings ?? {};
+
+      if (!wanted) {
+        appendSystem(
+          `Auto-continue is <strong>${current.autoContinue ? "ON" : "OFF"}</strong>, ` +
+          `capped at ${current.maxAutoContinues ?? 12} rounds per send.<br>` +
+          `<code>/continue off</code> to disable, <code>/continue 20</code> to change the cap.`
+        );
+        return;
+      }
+
+      if (wanted === "off" || wanted === "on") {
+        await patchSettings({ autoContinue: wanted === "on" });
+        appendSystem(
+          wanted === "on"
+            ? "Auto-continue <strong>ON</strong>. Unfinished turns resume by themselves until the work is done or the cap is hit."
+            : "Auto-continue <strong>OFF</strong>. You will need to send \"continue\" yourself when a turn stops short."
+        );
+        return;
+      }
+
+      const rounds = Number(wanted);
+      if (!Number.isFinite(rounds)) {
+        appendSystem("Use <code>/continue on|off</code> or <code>/continue &lt;rounds&gt;</code>.");
+        return;
+      }
+      const settings = await patchSettings({ autoContinue: true, maxAutoContinues: rounds });
+      if (settings) {
+        appendSystem(`Auto-continue <strong>ON</strong>, up to <strong>${settings.maxAutoContinues}</strong> rounds per send.`);
+      }
+    }
+
+    async function cmdPlan(args) {
+      const { body } = await safeJson("/api/session/settings");
+
+      if (args === "off") {
+        await patchSettings({ planMode: false });
+        appendSystem("Plan mode <strong>OFF</strong>. Mutating tools are available again.");
+        return;
+      }
+
+      if (args === "show" || (!args && body.settings.planMode && body.settings.plan)) {
+        appendSystem(
+          body.settings.plan
+            ? `<strong>Current plan</strong><br>${renderContent(body.settings.plan)}`
+            : "No plan produced yet. Ask for one while plan mode is on."
+        );
+        return;
+      }
+
+      if (body.settings.planMode) {
+        appendSystem(
+          `Plan mode is already <strong>ON</strong>. Use <code>/plan show</code> to see the plan, or <code>/plan off</code> to allow changes.`
+        );
+        return;
+      }
+
+      await patchSettings({ planMode: true, plan: null });
+      appendSystem(
+        "Plan mode <strong>ON</strong>. Every writing, deleting and shell tool is withheld — " +
+        "not just discouraged. Ask for what you want and you'll get a numbered plan.<br>" +
+        "<code>/plan show</code> to re-read it · <code>/plan off</code> to allow changes."
+      );
+    }
+
+    async function cmdAdhd() {
+      const { body } = await safeJson("/api/session/settings");
+      const next = body.settings.outputStyle === "adhd" ? "default" : "adhd";
+      await patchSettings({ outputStyle: next });
+      appendSystem(
+        next === "adhd"
+          ? "ADHD output style <strong>ON</strong>: next action first, numbered steps, specific estimates, no preamble or filler."
+          : "Output style back to <strong>default</strong>."
+      );
+    }
+
+    async function cmdDebug() {
+      const { body } = await safeJson("/api/session/settings");
+      const next = !body.settings.debug;
+      await patchSettings({ debug: next });
+
+      document.getElementById("debug-panel-wrap").style.display = next ? "flex" : "none";
+      appendSystem(
+        next
+          ? "Debug <strong>ON</strong>. Every inference step, tool filter and turn summary now streams to the Debug panel in the sidebar."
+          : "Debug <strong>OFF</strong>."
+      );
+    }
+
+    // ==========================================================================
+    // Skills, doctor, prompt macros, exit
+    // ==========================================================================
+
+    async function cmdSkills(args) {
+      const { body } = await safeJson("/api/skills");
+      const skills = body.skills ?? [];
+
+      if (args) {
+        const skill = skills.find((s) => s.name === args.trim());
+        if (!skill) {
+          appendSystem(`No skill named <code>${escapeHtml(args)}</code>. Run <code>/skills</code> to list them.`);
+          return;
+        }
+        document.getElementById("prompt-input").value = skill.prompt + " ";
+        document.getElementById("prompt-input").focus();
+        appendSystem(`Loaded skill <code>${escapeHtml(skill.name)}</code> into the input. Add your specifics and send.`);
+        return;
+      }
+
+      if (skills.length === 0) {
+        appendSystem(`No skills found in <code>${escapeHtml(body.directory ?? "")}</code>.`);
+        return;
+      }
+
+      appendSystem(
+        `<strong>Skills</strong> — reusable prompt macros. Load one with <code>/skills &lt;name&gt;</code>.<br>` +
+        `<table style="margin-top:6px;font-size:12px;">` +
+        skills.map((s) => `<tr><td style="padding:2px 12px 2px 0;color:var(--accent);font-weight:bold;">${escapeHtml(s.name)}</td><td style="color:var(--text-secondary);">${escapeHtml(s.description)}</td></tr>`).join("") +
+        `</table><div style="margin-top:8px;color:var(--text-muted);">Each one is also its own slash command, so <code>/skills verify</code> and <code>/verify</code> are the same thing. Editable as markdown in <code>${escapeHtml(body.directory ?? "")}</code> — drop in a new .md file to add one, then reload the page to pick up its command.</div>`
+      );
+    }
+
+    // Opens the Diagnostics panel rather than printing a table into the
+    // transcript, where it scrolled away and could not be returned to.
+    async function cmdDoctor() {
+      if (typeof window.openDoctorPanel === "function") {
+        window.openDoctorPanel();
+        return;
+      }
+      appendSystem("Running diagnostics…");
+      const { body } = await safeJson("/api/doctor");
+      const checks = body.checks ?? [];
+      const icon = { pass: "🟢", warn: "🟡", fail: "🔴" };
+
+      const rows = checks
+        .map((c) => {
+          const fix = c.fix ? `<div style="color:var(--warn-text);font-size:11px;margin-top:2px;">Fix: ${escapeHtml(c.fix)}</div>` : "";
+          return `<tr><td style="padding:3px 8px 3px 0;vertical-align:top;">${icon[c.status] ?? "•"}</td>` +
+            `<td style="padding:3px 12px 3px 0;vertical-align:top;font-weight:bold;white-space:nowrap;">${escapeHtml(c.name)}</td>` +
+            `<td style="padding:3px 0;color:var(--text-secondary);">${escapeHtml(c.detail)}${fix}</td></tr>`;
+        })
+        .join("");
+
+      const s = body.summary ?? { pass: 0, warn: 0, fail: 0 };
+      appendSystem(
+        `<strong>Health report</strong> — 🟢 ${s.pass} pass · 🟡 ${s.warn} warn · 🔴 ${s.fail} fail` +
+        `<table style="margin-top:6px;font-size:12px;">${rows}</table>` +
+        (s.fail === 0 && s.warn === 0 ? `<div style="margin-top:8px;color:var(--ok);">Everything checks out.</div>` : "")
+      );
+    }
+
+    async function loadSkillIntoInput(name, trailing) {
+      const { body } = await safeJson(`/api/skills/${encodeURIComponent(name)}`);
+      if (!body.prompt) {
+        appendSystem(`Skill <code>${escapeHtml(name)}</code> is unavailable.`);
+        return null;
+      }
+      return `${body.prompt}${trailing ? "\n" + trailing : ""}`;
+    }
+
+    // Every skill becomes its own slash command.
+    //
+    // Before this, COMMANDS was a hand-written table and a skill only got a
+    // slash command if somebody added a line to it — so /prompt, /learn,
+    // /verify and /run worked while a skill the user wrote themselves did not,
+    // despite /skills output saying "drop in a new .md file to add one". Typing
+    // the obvious thing produced "Unknown command /unity. Type /help."
+    //
+    // Registered rather than special-cased, because the failure was structural:
+    // the fix has to cover the NEXT skill the user writes, not the one they
+    // just complained about.
+    //
+    // Two rules:
+    //   • A hand-written command always wins. /verify and /run have wrappers
+    //     with behaviour beyond loading the prompt, and a skill file of the same
+    //     name must not silently replace them.
+    //   • Failure here is survivable. If the fetch fails the built-in commands
+    //     keep working and /skills still lists everything, so this logs and
+    //     moves on rather than breaking the input box.
+    async function registerSkillCommands() {
+      const { ok, body } = await safeJson("/api/skills");
+      if (!ok) {
+        console.warn("Could not load skills; only built-in slash commands are available.");
+        return;
+      }
+
+      let added = 0;
+      for (const skill of body.skills ?? []) {
+        // Skill names come from filenames and become object keys and menu
+        // entries, so anything that is not a plain name is skipped rather than
+        // escaped — a skill called "../x" is a mistake, not a command.
+        if (!/^[a-z0-9][a-z0-9-]*$/i.test(skill.name)) continue;
+
+        const command = `/${skill.name}`;
+        if (COMMANDS[command]) continue;
+
+        COMMANDS[command] = {
+          description: skill.description ?? `Run the ${skill.name} skill`,
+          fromSkill: true,
+          run: (args) => runSkillCommand(skill.name, args, "Add your specifics, then send."),
+        };
+        added++;
+      }
+
+      if (added > 0) console.log(`Registered ${added} skill command(s).`);
+    }
+
+    async function runSkillCommand(name, args, needsArgsHint) {
+      if (!args) {
+        const input = document.getElementById("prompt-input");
+        const loaded = await loadSkillIntoInput(name, "");
+        if (loaded) {
+          input.value = loaded;
+          input.focus();
+          appendSystem(`Loaded the <code>${escapeHtml(name)}</code> skill. ${escapeHtml(needsArgsHint)}`);
+        }
+        return;
+      }
+
+      const prompt = await loadSkillIntoInput(name, args);
+      if (!prompt) return;
+
+      const model = document.getElementById("model-select").value;
+      if (!model) {
+        appendMessage("Error", "No model is selected.", "error-msg");
+        return;
+      }
+
+      setStatus("Working...");
+      // `skill` travels with the message so the server can run that skill's
+      // output validator when the turn ends. Skills with no validator are
+      // unaffected — the name is just ignored.
+      socket.emit("send-message", { prompt, model, skill: name });
+    }
+
+    // Sends straight away rather than parking the skill in the composer: the
+    // rough ask IS the argument, and the skill's first move is to ask about it.
+    async function cmdPrompt(args) {
+      if (!args) {
+        appendSystem(
+          "Usage: <code>/prompt &lt;the rough thing you want&gt;</code><br>" +
+          "You get asked up to six questions, then a finished prompt in a code block to paste at a small local model."
+        );
+        return;
+      }
+
+      const prompt = await loadSkillIntoInput("prompt", args);
+      if (!prompt) return;
+
+      const model = document.getElementById("model-select").value;
+      if (!model) { appendMessage("Error", "No model is selected.", "error-msg"); return; }
+
+      appendSystem(`Building a prompt for: <em>${escapeHtml(args)}</em><br>Answer the questions as they come; the finished prompt lands in a code block.`);
+      setStatus("Working...");
+      socket.emit("send-message", { prompt, model });
+    }
+
+    // ==========================================================================
+    // Trading commands
+    //
+    // Each one is a skill plus a standing warning. The warning is not decoration:
+    // these commands reach tools that spend money, and the one thing the UI can
+    // guarantee is that the user was told which account they point at.
+    // ==========================================================================
+
+    /** Send a trading skill immediately, with the account it will act on named up front. */
+    async function runTradingSkill(skillName, args, headline) {
+      const model = document.getElementById("model-select").value;
+      if (!model) { appendMessage("Error", "No model is selected.", "error-msg"); return; }
+
+      const prompt = await loadSkillIntoInput(skillName, args ?? "");
+      if (!prompt) return;
+
+      appendSystem(headline);
+      setStatus("Working...");
+      socket.emit("send-message", { prompt, model });
+    }
+
+    /** Which OANDA account the trading tools are pointed at, and whether they are unlocked. */
+    async function tradingContext() {
+      // This route returns the array itself, not an envelope.
+      const { body: servers } = await safeJson("/api/mcp/servers");
+      const server = (Array.isArray(servers) ? servers : []).find((s) => s.name === "oanda-trading");
+      if (!server) return { available: false, note: "The oanda-trading server is not configured." };
+      if (!server.connected) {
+        return {
+          available: false,
+          note: `oanda-trading is not connected${server.unavailableReason ? `: ${escapeHtml(server.unavailableReason)}` : "."}`,
+        };
+      }
+      return {
+        available: true,
+        readOnly: server.readOnly,
+        note: server.readOnly
+          ? `<strong>Locked (read-only)</strong> — analysis runs, orders are refused. Unlock with the 🔒 toggle in Settings → Connections.`
+          : `<strong>Unlocked</strong> — order tools are live.`,
+      };
+    }
+
+    async function cmdMoney(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+      await runTradingSkill(
+        "money",
+        args,
+        `Finding the highest expected-value trades. ${context.note}<br>` +
+        `Every recommendation is reported with its worst case before anything is placed. Press <strong>Stop</strong> to interrupt.`
+      );
+    }
+
+    async function cmdRoi(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+      await runTradingSkill(
+        "roi",
+        args,
+        `Ranking today's setups by expected return. Analysis only — nothing is placed.<br>` +
+        `<span style="color:var(--text-muted);">Measuring each pair out of sample takes a minute or two on a local model.</span>`
+      );
+    }
+
+    async function cmdTradeReport(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+      const period = args.trim().toLowerCase() || "today";
+      await runTradingSkill("tradereport", period, `Building the <strong>${escapeHtml(period)}</strong> trading report.`);
+    }
+
+    async function cmdPairs(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+      await runTradingSkill(
+        "pairs",
+        args,
+        `Sweeping every instrument this account can trade and pricing each one. ` +
+        `<span style="color:var(--text-muted);">One pricing pass over ~70 instruments — give it a moment.</span>`
+      );
+    }
+
+    async function cmdAggression(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+      const level = args.trim().toLowerCase();
+      const known = ["conservative", "balanced", "aggressive", "max"];
+      if (level && !known.includes(level)) {
+        appendSystem(`Unknown level <code>${escapeHtml(level)}</code>. Use ${known.map((l) => `<code>${l}</code>`).join(", ")}.`);
+        return;
+      }
+      await runTradingSkill(
+        "aggression",
+        level,
+        level
+          ? `Changing risk appetite to <strong>${escapeHtml(level)}</strong>. The change is shown in account currency before it is applied.`
+          : `Showing the four risk appetites and which one is active.`
+      );
+    }
+
+    // /autopilot does two different jobs, and only one of them is a model turn.
+    // Scheduling is a plain API call: creating a cron entry is deterministic, and
+    // routing it through a local model would be slower and less reliable.
+    async function cmdAutopilot(args) {
+      const context = await tradingContext();
+      if (!context.available) { appendSystem(context.note); return; }
+
+      const [verb, ...rest] = args.trim().split(/\s+/);
+      const AUTOPILOT_JOB = "oanda-autopilot";
+
+      if (verb === "schedule") {
+        const schedule = rest.join(" ") || "*/15 * * * 1-5";
+        const preview = await safeJson(`/api/cron/preview?schedule=${encodeURIComponent(schedule)}`);
+        if (!preview.body?.valid) {
+          appendSystem(`Not a valid cron expression: <code>${escapeHtml(schedule)}</code> — ${escapeHtml(preview.body?.error ?? "unknown")}`);
+          return;
+        }
+
+        const existing = (await safeJson("/api/cron")).body?.jobs ?? [];
+        if (existing.some((job) => job.name === AUTOPILOT_JOB)) {
+          appendSystem(`A job named <code>${AUTOPILOT_JOB}</code> already exists. Remove it with <code>/autopilot unschedule</code> first.`);
+          return;
+        }
+
+        const { ok, body } = await safeJson("/api/cron", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: AUTOPILOT_JOB,
+            schedule,
+            kind: "prompt",
+            prompt:
+              "Run one autopilot cycle now: call oanda_autopilot_run. Report exactly what it did " +
+              "and what it declined to do, quoting the reasons it returned. Do not place any order " +
+              "yourself outside that tool, and do not change any parameter. If it reports trades " +
+              "queued for approval, list them and stop.",
+          }),
+        });
+        if (!ok) {
+          appendSystem(`Could not schedule: ${escapeHtml(body?.error ?? "unknown error")}`);
+          return;
+        }
+
+        appendSystem(
+          `Autopilot scheduled: <code>${escapeHtml(schedule)}</code><br>` +
+          `Next runs: ${(preview.body.upcoming ?? []).slice(0, 3).map((t) => escapeHtml(t)).join(", ")}<br>` +
+          `${context.note}<br>` +
+          `<strong>It will not open trades</strong> until autopilot is enabled, set to full mode and armed — ` +
+          `run <code>/autopilot</code> to see the exact gate. Managing open trades needs none of that.`
+        );
+        return;
+      }
+
+      if (verb === "unschedule") {
+        const jobs = (await safeJson("/api/cron")).body?.jobs ?? [];
+        const job = jobs.find((entry) => entry.name === AUTOPILOT_JOB);
+        if (!job) { appendSystem("No autopilot job is scheduled."); return; }
+        await safeJson(`/api/cron/${encodeURIComponent(job.id)}`, { method: "DELETE" });
+        appendSystem("Autopilot job removed. Nothing runs on a schedule now.");
+        return;
+      }
+
+      await runTradingSkill(
+        "autopilot",
+        args,
+        `Checking the autopilot. ${context.note}<br>` +
+        `<code>/autopilot schedule &lt;cron&gt;</code> creates the timer (default <code>*/15 * * * 1-5</code>), ` +
+        `<code>/autopilot unschedule</code> removes it.`
+      );
+    }
+
+    async function cmdVerify(args) {
+      await runSkillCommand("verify", args, "Describe what to verify, then send.");
+    }
+
+    async function cmdRun(args) {
+      await runSkillCommand("run", args, "Add any context, then send.");
+    }
+
+    // Unlike /verify and /run, this one has something to work on already: the
+    // conversation above it. So it sends immediately rather than parking the
+    // skill in the input box waiting for a subject.
+    async function cmdLearn(args) {
+      const prompt = await loadSkillIntoInput("learn", args ?? "");
+      if (!prompt) return;
+
+      const model = document.getElementById("model-select").value;
+      if (!model) { appendMessage("Error", "No model is selected.", "error-msg"); return; }
+
+      appendSystem(
+        args
+          ? `Reflecting on: <em>${escapeHtml(args)}</em>. Anything worth keeping is saved as a skill — you will be asked before the file is written.`
+          : "Reflecting on this conversation. Anything worth keeping is saved as a skill — you will be asked before the file is written."
+      );
+
+      setStatus("Working...");
+      socket.emit("send-message", { prompt, model });
+    }
+
+    // ==========================================================================
+    // Deep research
+    // ==========================================================================
+
+    let researchBox = null;
+
+    async function cmdSearch(args) {
+      if (!args) {
+        appendSystem("Usage: <code>/search &lt;query&gt;</code>");
+        return;
+      }
+      const model = document.getElementById("model-select").value;
+      if (!model) { appendMessage("Error", "No model is selected.", "error-msg"); return; }
+
+      setStatus("Working...");
+      socket.emit("send-message", {
+        prompt: `Use web_search for "${args}", then fetch_url on the two most promising results, and summarise what you actually read. Cite each URL.`,
+        model,
+      });
+    }
+
+    async function cmdDeepResearch(args) {
+      if (!args) {
+        appendSystem(
+          "Usage: <code>/deep-research &lt;topic or question&gt;</code><br><br>" +
+          "Runs six stages: decompose → search → read → extract claims → adversarially verify → cited report. " +
+          "Breadth follows <code>/effort</code> (low ≈ 3 sources, medium ≈ 5, high ≈ 8).<br>" +
+          "<strong>This takes minutes on local models</strong> — roughly 15-30 model calls."
+        );
+        return;
+      }
+
+      const model = document.getElementById("model-select").value;
+      if (!model) { appendMessage("Error", "No model is selected.", "error-msg"); return; }
+
+      // One live-updating panel instead of a flood of separate messages.
+      const chatBox = document.getElementById("chat-box");
+      researchBox = document.createElement("div");
+      researchBox.className = "message pipeline-msg";
+      researchBox.innerHTML =
+        `<strong>🔬 Deep research:</strong> ${escapeHtml(args)}` +
+        `<div id="research-stages" style="margin-top:8px; font-size:12px;"></div>`;
+      chatBox.appendChild(researchBox);
+      chatBox.scrollTop = chatBox.scrollHeight;
+
+      setStatus("Researching...");
+      socket.emit("send-research", { topic: args, model });
+    }
+
+    const STAGE_LABELS = {
+      start: "⚙️ Setup",
+      decompose: "🧩 Decompose",
+      search: "🔍 Search",
+      read: "📄 Read sources",
+      extract: "🧪 Extract claims",
+      verify: "⚖️ Verify",
+      synthesize: "✍️ Synthesize",
+      done: "✅ Done",
+    };
+
+    socket.on("research-progress", (payload) => {
+      const stages = document.getElementById("research-stages");
+      if (!stages) return;
+
+      let row = stages.querySelector(`[data-stage="${payload.stage}"]`);
+      if (!row) {
+        row = document.createElement("div");
+        row.dataset.stage = payload.stage;
+        row.style.cssText = "padding:3px 0; border-top:1px solid var(--surface-2);";
+        stages.appendChild(row);
+      }
+
+      const progress =
+        payload.done && payload.total ? ` <span style="color:var(--surface-3);">(${payload.done}/${payload.total})</span>` : "";
+
+      row.innerHTML =
+        `<span style="color:var(--accent);font-weight:bold;">${escapeHtml(STAGE_LABELS[payload.stage] ?? payload.stage)}</span> ` +
+        `<span style="color:var(--text-secondary);">${escapeHtml(payload.message)}</span>${progress}`;
+
+      document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
+    });
+
+    socket.on("research-usage", (usage) => {
+      const stages = document.getElementById("research-stages");
+      if (!stages) return;
+      let row = stages.querySelector('[data-stage="__usage"]');
+      if (!row) {
+        row = document.createElement("div");
+        row.dataset.stage = "__usage";
+        row.style.cssText = "padding:3px 0; border-top:1px solid var(--surface-2); color:var(--text-muted); font-size:11px;";
+        stages.appendChild(row);
+      }
+      row.innerHTML = `⚡ ${fmt(usage.totalTokens)} tokens over ${fmt(usage.calls)} model call(s)`;
+    });
+
+    socket.on("research-complete", (report) => {
+      researchBox = null;
+
+      const verdictCounts = (report.claims ?? []).reduce((acc, c) => {
+        acc[c.verdict] = (acc[c.verdict] ?? 0) + 1;
+        return acc;
+      }, {});
+
+      const meta =
+        `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">` +
+        `${report.sources.length} source(s) read · ` +
+        `${verdictCounts.supported ?? 0} supported · ${verdictCounts.contested ?? 0} contested · ` +
+        `${verdictCounts.unsupported ?? 0} rejected · via ${escapeHtml(report.backend)} · ` +
+        `${fmt(report.usage.totalTokens)} tokens / ${report.usage.calls} calls</div>`;
+
+      appendMessage("Research", meta + renderContent(report.report), "ai-msg");
+
+      (report.warnings ?? []).forEach((w) => appendMessage("Note", escapeHtml(w), "warn-msg"));
+
+      if ((verdictCounts.unsupported ?? 0) > 0) {
+        appendMessage(
+          "Note",
+          `${verdictCounts.unsupported} claim(s) failed verification and were excluded from the report. ` +
+          `Turn on <code>/debug</code> to see the reasoning.`,
+          "warn-msg"
+        );
+      }
+    });
+
+    async function cmdExit() {
+      if (!confirm("Shut down the assistant server?\n\nThe web UI will stop working until you run `cullus` again.")) return;
+
+      appendSystem("Shutting down the server…");
+      await safeJson("/api/shutdown", { method: "POST" });
+      setStatus("Stopped");
+      appendSystem("Server stopped. Run <code>assistant</code> in your terminal to start it again.");
+    }
+
+    // ==========================================================================
+    // Mode chips — make active switches visible at all times
+    // ==========================================================================
+
+    function renderModeChips(settings) {
+      const wrap = document.getElementById("mode-chips");
+      if (!settings) return;
+
+      const chips = [];
+      if (settings.planMode) chips.push(["📋 plan mode", "var(--accent)"]);
+      if (settings.effort !== "medium") chips.push([`⚙️ effort: ${settings.effort}`, "var(--purple)"]);
+      if (settings.outputStyle === "adhd") chips.push(["⚡ adhd", "var(--ok)"]);
+      // Non-default only, like the effort chip: a chip for the default state is noise.
+      if (settings.fidelity && settings.fidelity !== "playable") {
+        chips.push([`🧱 fidelity: ${settings.fidelity}`, "var(--warn)"]);
+      }
+      if (settings.debug) chips.push(["🐛 debug", "var(--warn)"]);
+      // The goal chip is the off switch as well as the indicator: a standing
+      // instruction you can see but not reach is the thing people complain about.
+      if (settings.goal) {
+        chips.push([
+          `🎯 ${settings.goal.slice(0, 40)}${settings.goal.length > 40 ? "…" : ""} ✕`,
+          "var(--pink)",
+          { onClick: "window.clearGoal()", title: `Click to drop this goal. Also: /goal off — ${settings.goal}` },
+        ]);
+      }
+      // Only shown when OFF: on is the default, and a chip for the default state is
+      // noise. Off is the surprising one — it explains why a long job stopped short.
+      if (settings.autoContinue === false) chips.push(["↻ auto-continue off", "var(--text-faint)"]);
+
+      wrap.innerHTML = chips
+        .map(([label, color, action]) =>
+          `<span${action ? ` onclick="${escapeHtml(action.onClick)}" title="${escapeHtml(action.title ?? "")}"` : ""}` +
+          ` style="background:${color};color:var(--surface-0);font-size:10px;font-weight:bold;padding:2px 7px;border-radius:10px;${action ? "cursor:pointer;" : ""}">${escapeHtml(label)}</span>`
+        )
+        .join(" ");
+    }
+
+    // ==========================================================================
+    // Send
+    // ==========================================================================
+
+    async function sendMessage() {
+      const input = document.getElementById("prompt-input");
+      const raw = input.value.trim();
+      if (!raw) return;
+
+      // Recorded before any of the early returns below, so a slash command or an
+      // answer to a pending question is recallable too — a shell remembers every
+      // line you entered, not just the ones that did work.
+      rememberPrompt(raw);
+
+      slashMenu.style.display = "none";
+
+      // A question from ask_user is blocking a running turn, so typed text is the
+      // answer to it — not a new turn. Sending a second turn here would be rejected
+      // as "already working on something" and leave the model waiting on a question
+      // the user has, from their point of view, just answered.
+      if (!raw.startsWith("/") && window.pendingChoice && window.pendingChoice()) {
+        appendPlain("You", raw, "user-msg");
+        input.value = "";
+        window.answerPendingChoice(raw);
+        return;
+      }
+
+      if (raw.startsWith("/")) {
+        const [name, ...rest] = raw.split(" ");
+        const command = COMMANDS[name];
+
+        appendPlain("You", raw, "user-msg");
+        input.value = "";
+
+        if (!command) {
+          const suggestions = Object.keys(COMMANDS).filter((c) => c.startsWith(name.slice(0, 3)));
+          appendSystem(
+            `Unknown command <code>${escapeHtml(name)}</code>.` +
+            (suggestions.length ? ` Did you mean ${suggestions.map((s) => `<code>${escapeHtml(s)}</code>`).join(" or ")}?` : " Type <code>/help</code>.")
+          );
+          return;
+        }
+
+        try {
+          await command.run(rest.join(" ").trim());
+        } catch (err) {
+          appendSystem(`<code>${escapeHtml(name)}</code> failed: ${escapeHtml(err.message)}`);
+        }
+        return;
+      }
+
+      const model = document.getElementById("model-select").value;
+      if (!model) {
+        appendPlain("You", raw, "user-msg");
+        input.value = "";
+        appendMessage("Error", "No model is selected. Pull one with <code>ollama pull qwen3.5:9b</code>, then run <code>/models</code>.", "error-msg");
+        return;
+      }
+
+      appendPlain("You", raw, "user-msg");
+      input.value = "";
+
+      if (document.getElementById("enable-pipeline-toggle").checked) {
+        // Two shapes behind one toggle: fan-out across N workers on one model, or
+        // the original three-role sequence. pipeline.js owns the controls.
+        const mode = window.pipelineMode ? window.pipelineMode() : "roles";
+        const workers = window.workerCount ? window.workerCount() : 1;
+
+        setStatus(mode === "fanout" ? `Running ${workers} worker(s)...` : "Running Pipeline...");
+        socket.emit("send-pipeline", {
+          prompt: raw,
+          mode,
+          workers,
+          models: {
+            plannerModel: document.getElementById("triage-model-select").value || model,
+            workerModel: document.getElementById("engineer-model-select").value || model,
+            triageModel: document.getElementById("triage-model-select").value,
+            engineerModel: document.getElementById("engineer-model-select").value,
+            managerModel: document.getElementById("manager-model-select").value,
+          },
+        });
+      } else {
+        setStatus("Working...");
+        socket.emit("send-message", { prompt: raw, model });
+      }
+    }
+
+    // ==========================================================================
+    // Socket events
+    // ==========================================================================
+
+    socket.on("ai-response", (data) => {
+      appendMessage("AI", renderContent(data.content) + usageFooter(data.usage), "ai-msg");
+
+      (data.degraded ?? []).forEach((note) => {
+        appendMessage("Note", escapeHtml(note), "warn-msg");
+      });
+
+      // An unattended loop has to say it is looping, and say how to stop it —
+      // otherwise a ten-round job looks like the model ignoring the user.
+      if (data.continuing) {
+        appendSystem(
+          `↻ Continuing by itself (round ${data.continuing.round} of ${data.continuing.of}) — ` +
+          `next: <em>${escapeHtml(String(data.continuing.next))}</em><br>` +
+          `<span style="color:var(--text-muted);">Press <strong>Stop</strong> to end the run. ` +
+          `<code>/continue off</code> disables this.</span>`
+        );
+      }
+
+      updateContextMeter(data.usage);
+      updateSessionUsage(data.session);
+    });
+
+    socket.on("assistant-error", (data) => {
+      appendMessage(
+        "Error",
+        escapeHtml(data.message) + (data.hint ? `<div style="margin-top:6px;color:var(--warn-text);">Fix: ${escapeHtml(data.hint)}</div>` : ""),
+        "error-msg"
+      );
+      setStatus("Error");
+    });
+
+    // A message sent while a turn was already running. It is queued, not
+    // refused, so the acknowledgement has to say which — otherwise the composer
+    // looks like it swallowed the text. The model's own acknowledgement follows
+    // one step later, once it has actually read it.
+    socket.on("message-queued", (data) => {
+      appendSystem(escapeHtml(data.note ?? "Queued for the run in progress."));
+      setStatus("Working... (your message is queued)");
+    });
+
+    socket.on("session-usage", updateSessionUsage);
+
+    socket.on("pipeline-step-complete", (data) => {
+      appendMessage(`Pipeline [${data.role}]`, renderContent(data.output), "pipeline-msg");
+    });
+
+    socket.on("status", setStatus);
+
+    // ---- live progress -------------------------------------------------------
+    //
+    // One dim line per action, appended as the turn runs, in the style of a CLI
+    // transcript. They accumulate into a single block rather than one bubble each,
+    // so a twelve-step turn does not bury the answer.
+    //
+    // They are deliberately kept after the answer arrives: "which tools did it
+    // actually call, and what took four minutes" is the question you ask once the
+    // reply is in front of you, not before.
+
+    let progressBlock = null;
+
+    const PROGRESS_MARK = {
+      step: "▸",
+      tool: "⚙",
+      "tool-done": "✓",
+      retry: "↻",
+      degrade: "⚠",
+      answer: "●",
+    };
+
+    socket.on("turn-progress", (event) => {
+      const chatBox = document.getElementById("chat-box");
+
+      if (!progressBlock) {
+        progressBlock = document.createElement("div");
+        progressBlock.className = "message progress-msg";
+        chatBox.appendChild(progressBlock);
+      }
+
+      const line = document.createElement("div");
+      line.className = "progress-line";
+      if (event.warn) line.classList.add("warn");
+      line.innerHTML =
+        `<span class="progress-mark">${escapeHtml(PROGRESS_MARK[event.kind] ?? "·")}</span>` +
+        `<span>${escapeHtml(event.text ?? "")}</span>`;
+
+      progressBlock.appendChild(line);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    // A new turn starts a new block, so lines never merge across messages.
+    socket.on("turn-started", () => { progressBlock = null; });
+
+    // ==========================================================================
+    // Inline tool calls
+    //
+    // The server has always emitted `tool-executed`; nothing listened, so the
+    // only place a tool result could be read was the activity sidebar — a 300px
+    // column rendering 4,000 characters of JSON. Here the call renders where it
+    // happened, at full column width, collapsed to a single line.
+    // ==========================================================================
+
+    /** One-line gist of a call: the argument that identifies WHICH thing it acted on. */
+    function summariseToolArgs(args) {
+      if (!args || typeof args !== "object") return "";
+
+      // Ordered by how well each identifies the target, so `read_file` shows its
+      // path and `search` shows its query rather than whichever key sorts first.
+      for (const key of ["path", "file_path", "file", "query", "q", "command", "url", "name", "id"]) {
+        const value = args[key];
+        if (typeof value === "string" && value.trim()) {
+          return value.length > 120 ? `${value.slice(0, 120)}…` : value;
+        }
+      }
+
+      const keys = Object.keys(args);
+      return keys.length ? `${keys.length} argument${keys.length === 1 ? "" : "s"}` : "";
+    }
+
+    /** Pretty-print for display. Strings pass through unless they are really JSON. */
+    function formatToolPayload(value) {
+      if (value === undefined || value === null) return "(no output)";
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        const structured =
+          (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]"));
+        if (structured) {
+          try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch { /* show as-is */ }
+        }
+        return value;
+      }
+      try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+    }
+
+    function sizeLabel(text) {
+      const n = text.length;
+      if (n < 1024) return `${n} B`;
+      return `${(n / 1024).toFixed(1)} KB`;
+    }
+
+    socket.on("tool-executed", ({ name, args, result }) => {
+      const chatBox = document.getElementById("chat-box");
+
+      // A tool call ends the current progress run: the lines above it described
+      // getting to this call, and lines after it belong to the next step.
+      progressBlock = null;
+
+      const resultText = formatToolPayload(result);
+      const failed = Boolean(result && typeof result === "object" && result.error);
+
+      const block = document.createElement("div");
+      block.className = "message tool-call" + (failed ? " is-error" : "");
+
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "tool-call-head";
+      head.setAttribute("aria-expanded", "false");
+      head.innerHTML =
+        `<span class="tool-call-caret">▸</span>` +
+        `<span class="tool-call-name">${escapeHtml(String(name ?? "tool"))}</span>` +
+        `<span class="tool-call-summary">${escapeHtml(summariseToolArgs(args))}</span>` +
+        `<span class="tool-call-meta">${failed ? "failed" : escapeHtml(sizeLabel(resultText))}</span>`;
+
+      const body = document.createElement("div");
+      body.className = "tool-call-body";
+
+      // Arguments are omitted when there are none — an empty "ARGUMENTS" heading
+      // over an empty box is noise on a call like `list_tools`.
+      if (args && typeof args === "object" && Object.keys(args).length > 0) {
+        const argsLabel = document.createElement("div");
+        argsLabel.className = "tool-call-label";
+        argsLabel.textContent = "Arguments";
+
+        const argsPre = document.createElement("pre");
+        argsPre.className = "tool-call-pre";
+        argsPre.textContent = formatToolPayload(args);
+
+        body.append(argsLabel, argsPre);
+      }
+
+      const resultLabel = document.createElement("div");
+      resultLabel.className = "tool-call-label";
+      resultLabel.textContent = failed ? "Error" : "Result";
+
+      const resultPre = document.createElement("pre");
+      resultPre.className = "tool-call-pre";
+      resultPre.textContent = resultText;
+
+      body.append(resultLabel, resultPre);
+
+      head.addEventListener("click", () => {
+        const open = block.classList.toggle("is-open");
+        head.setAttribute("aria-expanded", String(open));
+      });
+
+      block.append(head, body);
+      chatBox.appendChild(block);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    // Tool calls are also rendered by js/activity.js from the server's activity
+    // stream, alongside commands, edits and /fix phases — that view is the durable
+    // log, this one is the live feed.
+
+    socket.on("disconnect", () => {
+      setStatus("Disconnected");
+      appendSystem("Lost connection to the assistant server. Is <code>assistant</code> still running?");
+    });
+
+    socket.on("connect", () => setStatus("Ready"));
+
+    socket.on("debug-trace", (payload) => {
+      const panel = document.getElementById("debug-panel");
+      if (!panel) return;
+      if (panel.textContent.includes("Waiting for activity")) panel.innerHTML = "";
+
+      const time = new Date(payload.timestamp).toLocaleTimeString();
+      const detail =
+        typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail, null, 1);
+
+      const item = document.createElement("div");
+      item.style.cssText = "margin-bottom:6px; border-bottom:1px solid var(--surface-1); padding-bottom:4px;";
+      item.innerHTML =
+        `<span style="color:var(--warn);">${escapeHtml(payload.stage)}</span> <span style="color:var(--surface-3);">${escapeHtml(time)}</span>` +
+        `<pre style="margin:2px 0; font-size:10px; max-height:120px;">${escapeHtml(String(detail).slice(0, 1200))}</pre>`;
+
+      panel.appendChild(item);
+      panel.scrollTop = panel.scrollHeight;
+
+      // Keep the panel bounded so a long session can't grow without limit.
+      while (panel.children.length > 60) panel.removeChild(panel.firstChild);
+    });
+
+    async function loadSessionSettings() {
+      const { body } = await safeJson("/api/session/settings");
+      if (body.settings) {
+        renderModeChips(body.settings);
+        document.getElementById("debug-panel-wrap").style.display = body.settings.debug
+          ? "flex"
+          : "none";
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      loadAvailableModels();
+      fetchVaultStatus();
+      fetchMcpServers();
+      fetchAllowedPaths();
+      loadSessionSettings();
+      startMemoryPolling();
+      registerSkillCommands();
+
+      // The Stop button. Emits cancel-turn, which aborts the turn's
+      // AbortController server-side; the loop then breaks at its next check.
+      // Disabled immediately so a second click cannot queue a second cancel,
+      // and re-enabled by the next setStatus.
+      document.getElementById("status-stop").addEventListener("click", () => {
+        const stop = document.getElementById("status-stop");
+        stop.disabled = true;
+        stop.innerText = "Stopping…";
+        socket.emit("cancel-turn");
+        appendSystem("Stop requested. The turn ends at its next step boundary — a step already in flight has to finish first.");
+        setTimeout(() => {
+          stop.disabled = false;
+          stop.innerHTML = "■ Stop";
+        }, 4000);
+      });
+      // The command list is NOT printed here on purpose: it belongs in the "/"
+      // menu, not dumped into the transcript on every page load.
+    });
+  </script>
+  <script src="/js/settings.js"></script>
+  <script src="/js/models.js"></script>
+  <script src="/js/sessions.js"></script>
+  <script src="/js/checklist.js"></script>
+  <script src="/js/fix.js"></script>
+  <script src="/js/pipeline.js"></script>
+  <script src="/js/addServer.js"></script>
+  <script src="/js/modes.js"></script>
+  <script src="/js/choice.js"></script>
+  <script src="/js/activity.js"></script>
+  <script src="/js/vault.js"></script>
+  <script src="/js/performance.js"></script>
+  <script src="/js/cron.js"></script>
+  <script src="/js/tools.js"></script>
+  <script src="/js/doctor.js"></script>
+</body>
+
+</html>

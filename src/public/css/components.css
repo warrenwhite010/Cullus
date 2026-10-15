@@ -1,0 +1,787 @@
+/* Components and utilities.
+ *
+ * Everything here is built from tokens.css — no raw hex, no magic numbers.
+ *
+ * The utility classes at the bottom exist to replace the 147 inline `style=`
+ * attributes in index.html. The three most repeated inline properties were
+ * font-size (66 uses), color (58) and padding (38), so those get utilities
+ * first: `.t-sm .c-muted .p-4` reads better than a style attribute and, more
+ * importantly, is one of six sizes rather than one of twelve arbitrary ones.
+ */
+
+/* ===========================================================================
+ * Base
+ * ======================================================================== */
+
+body {
+  font-family: var(--font-sans);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Keyboard users need to see where they are. The old stylesheet had no focus
+ * styling at all, which makes the dashboard unusable without a mouse. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ===========================================================================
+ * Layout
+ * ======================================================================== */
+
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-7);
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-7);
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 15px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  position: relative;
+  min-height: 0;
+}
+
+.sidebar h3 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-3) 0;
+}
+
+/* ===========================================================================
+ * Messages
+ * ======================================================================== */
+
+.chat-box {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: 15px;
+}
+
+.message {
+  padding: var(--space-4) 14px;
+  border-radius: var(--radius);
+  max-width: 80%;
+  line-height: 1.45;
+  word-wrap: break-word;
+}
+
+.user-msg { background: var(--accent); color: var(--accent-contrast); align-self: flex-end; }
+.ai-msg { background: var(--surface-2); color: var(--text-primary); align-self: flex-start; }
+
+.system-msg {
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  align-self: flex-start;
+  font-size: var(--text-md);
+}
+
+.error-msg {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger-text);
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.warn-msg {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  color: var(--warn-text);
+  align-self: flex-start;
+  font-size: var(--text-base);
+  max-width: 90%;
+}
+
+.pipeline-msg {
+  background: var(--surface-1);
+  border: 1px dashed var(--accent);
+  color: var(--text-primary);
+  align-self: flex-start;
+  width: 90%;
+}
+
+/* Live progress: a quiet CLI-style transcript, subordinate to the answer. */
+.progress-msg {
+  background: transparent;
+  border-left: 2px solid var(--border);
+  border-radius: 0;
+  padding: 2px 0 2px var(--space-4);
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.progress-line {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-line.warn { color: #fbbf24; }
+.progress-mark { color: var(--text-faint); width: var(--space-5); flex-shrink: 0; }
+.progress-line.warn .progress-mark { color: #fbbf24; }
+
+/* ---------------------------------------------------------------------------
+   Inline tool calls
+   ---------------------------------------------------------------------------
+   A tool call renders where it happened, in the main column, collapsed to one
+   line. The activity sidebar is the durable log of everything; this is the
+   narrative — what this answer did, in order, at full column width.
+
+   Collapsed by default because a turn can make twenty calls and the answer is
+   the thing you came for.
+--------------------------------------------------------------------------- */
+
+.tool-call {
+  align-self: stretch;
+  max-width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  overflow: hidden;
+}
+
+.tool-call.is-error { border-color: var(--danger); }
+
+.tool-call-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+
+.tool-call-head:hover { background: var(--surface-2); }
+
+/* Rotates in place rather than swapping glyphs, so the row does not reflow. */
+.tool-call-caret {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+.tool-call.is-open .tool-call-caret { transform: rotate(90deg); }
+
+.tool-call-name {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* The one part that yields: a long path truncates, the name and timing do not. */
+.tool-call-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.tool-call-meta {
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-call-body {
+  display: none;
+  padding: 0 var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.tool-call.is-open .tool-call-body { display: block; }
+
+.tool-call-label {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+/* The reason this view exists. A bare <pre> defaults to white-space:pre, so a
+   4,000-character result became one line scrolling sideways — the same defect
+   the activity panel had, and the thing the narrow sidebar could not fix. */
+.tool-call-pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.msg-usage {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border-strong);
+  padding-top: var(--space-1);
+}
+
+/* ===========================================================================
+ * Controls
+ * ======================================================================== */
+
+.input-row { display: flex; gap: var(--space-4); position: relative; }
+
+input, select, button, textarea {
+  background: var(--surface-0);
+  border: 1px solid var(--border-strong);
+  color: var(--accent-contrast);
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  font-family: inherit;
+}
+
+input { flex: 1; min-width: 0; }
+
+button {
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background var(--transition);
+}
+button:hover { background: var(--accent-hover); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.secondary { background: var(--surface-3); }
+button.secondary:hover { background: var(--text-faint); }
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-weight: normal;
+}
+button.ghost:hover { background: var(--surface-2); }
+
+button.danger { background: var(--danger); }
+button.danger:hover { background: #dc2626; }
+
+.label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+pre {
+  margin: var(--space-2) 0;
+  background: var(--surface-0);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: var(--text-base);
+  font-family: var(--font-mono);
+}
+
+code {
+  background: var(--surface-0);
+  padding: 1px var(--space-1);
+  border-radius: 3px;
+  font-size: var(--text-base);
+  font-family: var(--font-mono);
+}
+
+.mcp-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+  background: var(--surface-0);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+/* Toggle switch */
+.switch { position: relative; display: inline-block; width: 36px; height: var(--space-7); flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--surface-3);
+  transition: var(--transition);
+  border-radius: var(--space-7);
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--accent-contrast);
+  transition: var(--transition);
+  border-radius: 50%;
+}
+input:checked + .slider { background-color: var(--accent); }
+input:checked + .slider:before { transform: translateX(var(--space-6)); }
+
+/* ===========================================================================
+ * Status
+ * ======================================================================== */
+
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+.usage-bar .sep { color: var(--surface-3); }
+
+.meter {
+  width: 120px;
+  height: var(--space-2);
+  background: var(--surface-0);
+  border-radius: 3px;
+  overflow: hidden;
+  flex: none;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 0.3s, background 0.3s;
+}
+.meter.warn > span { background: var(--warn); }
+.meter.danger > span { background: var(--danger); }
+
+.banner { font-size: var(--text-base); padding: var(--space-3) var(--space-4); border-radius: var(--radius); display: none; }
+.banner.error { display: block; background: var(--danger-bg); border: 1px solid var(--danger); color: var(--danger-text); }
+.banner.warn { display: block; background: var(--warn-bg); border: 1px solid var(--warn); color: var(--warn-text); }
+
+.dot { display: inline-block; width: var(--space-3); height: var(--space-3); border-radius: 50%; margin-right: var(--space-2); flex: none; }
+
+/* Status badge — one class instead of a background, a colour and a border. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.badge.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.badge.accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+/* ===========================================================================
+ * Overlay / settings
+ * ======================================================================== */
+
+.overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.82); display: none; z-index: 500; }
+.overlay.open { display: flex; align-items: center; justify-content: center; }
+
+.settings-window {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: min(1000px, 94vw);
+  height: min(720px, 92vh);
+  display: flex;
+  overflow: hidden;
+  box-shadow: var(--shadow-modal);
+}
+
+.settings-rail {
+  width: 190px;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  padding: var(--space-6) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: none;
+}
+.settings-rail button {
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: normal;
+  padding: 9px var(--space-5);
+  border-radius: var(--radius);
+  font-size: var(--text-md);
+}
+.settings-rail button:hover { background: var(--surface-2); }
+.settings-rail button.active { background: var(--accent); color: var(--accent-contrast); font-weight: bold; }
+
+.settings-body { flex: 1; padding: var(--space-7) var(--space-8); overflow-y: auto; min-width: 0; }
+.settings-body h3 { margin-top: 0; }
+
+.conn-table { width: 100%; border-collapse: collapse; font-size: var(--text-md); }
+.conn-table th {
+  text-align: left;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-2);
+  font-weight: normal;
+}
+.conn-table td { border-bottom: 1px solid var(--surface-1); padding: var(--space-4) var(--space-2); vertical-align: middle; }
+
+.chip-row { display: flex; gap: var(--space-2); margin: var(--space-4) 0 14px; }
+.chip {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--space-5);
+  cursor: pointer;
+}
+.chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: bold; }
+
+/* ===========================================================================
+ * Model picker / checklist
+ * ======================================================================== */
+
+.model-button {
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-weight: normal;
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.model-button:hover { background: var(--surface-2); }
+
+.model-popover {
+  display: none;
+  position: absolute;
+  bottom: 52px;
+  left: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  width: min(420px, 90%);
+  z-index: 200;
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.model-popover.open { display: block; }
+.model-option { padding: 9px var(--space-5); cursor: pointer; font-size: var(--text-base); display: flex; justify-content: space-between; gap: var(--space-4); }
+.model-option:hover { background: var(--surface-2); }
+.model-option.selected { background: var(--surface-0); border-left: 3px solid var(--accent); }
+
+.task-line { display: flex; gap: 7px; align-items: flex-start; font-size: var(--text-base); padding: 2px 0; }
+.task-line.active { color: var(--text-primary); font-weight: bold; }
+.task-line.pending { color: var(--text-muted); }
+.task-line.done { color: var(--text-faint); }
+.task-line.failed { color: #fca5a5; }
+.task-box { flex: none; width: var(--space-5); }
+.fix-event { font-size: var(--text-sm); padding: 2px 0; border-bottom: 1px solid var(--border-subtle); }
+
+/* ===========================================================================
+ * Scheduled jobs
+ * ======================================================================== */
+
+.cron-list { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.cron-job {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cron-job.disabled { opacity: 0.55; }
+
+.cron-job-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.cron-job-name { font-size: var(--text-md); font-weight: bold; }
+.cron-job-meta { font-size: var(--text-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.cron-job-actions { display: flex; gap: var(--space-2); align-items: center; }
+.cron-job-actions button { padding: var(--space-1) var(--space-3); font-size: var(--text-sm); font-weight: normal; }
+
+.cron-empty { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-6) 0; text-align: center; }
+
+.cron-form { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-5); }
+.cron-form input, .cron-form textarea, .cron-form select { font-size: var(--text-md); }
+.cron-form textarea { min-height: 60px; resize: vertical; }
+.cron-form-row { display: flex; gap: var(--space-3); }
+.cron-hint { font-size: var(--text-sm); color: var(--text-muted); line-height: 1.5; }
+
+
+/* Schedule preview: shows what the chosen schedule actually means, in words
+ * and as real upcoming times. A cron expression is unreadable to most people;
+ * "next: today 4:45 pm, then 5:00 pm" is not. */
+.cron-preview {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.cron-preview.invalid { border-left-color: var(--danger); color: var(--danger-text); }
+.cron-preview .cron-preview-expr { color: var(--text-faint); font-family: var(--font-mono); }
+
+
+/* ===========================================================================
+ * Tools popup
+ *
+ * Same shape as the slash-command menu — anchored above the composer, same
+ * width, same shadow — because it answers the same kind of question ("what can
+ * I use here?") and should not feel like a different surface.
+ * ======================================================================== */
+
+.tools-menu {
+  display: none;
+  position: absolute;
+  bottom: 70px;
+  left: 15px;
+  right: 15px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  z-index: 150;
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.tools-menu.open { display: block; }
+
+.tools-menu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--border-subtle);
+}
+.tools-menu-head input {
+  flex: 1;
+  background: var(--surface-0);
+  border: 1px solid var(--border-strong);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-base);
+  border-radius: var(--radius-sm);
+}
+.tools-menu-head .tools-count { font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; }
+
+.tools-menu-body { max-height: min(460px, 58vh); overflow-y: auto; }
+
+.tools-group-head {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  padding: var(--space-3) var(--space-5) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tool-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--text-base);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tool-row:hover { background: var(--surface-2); }
+.tool-name { font-family: var(--font-mono); color: var(--text-primary); white-space: nowrap; }
+.tool-desc { color: var(--text-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-cost { color: var(--text-faint); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* A configured server that is not connected. Dimmed and struck through the
+ * name, because it is information about something absent — it should read as
+ * "this exists but is off", not compete with the tools that work. */
+.tool-row-off { opacity: 0.6; }
+.tool-row-off .tool-name { color: var(--text-faint); text-decoration: line-through; }
+.tool-row-off .tool-desc { color: var(--warn); }
+
+/* A server that is connected and offering nothing needs a second line: the
+ * reason, then what still works while it is in that state. The row's default
+ * one-line ellipsis would eat exactly the half that answers "so what do I do
+ * now?", so this row alone wraps, and the second line reads as neutral fact
+ * rather than a second warning. */
+.tool-row-modes { flex-wrap: wrap; }
+.tool-row-modes .tool-name { text-decoration: none; }
+.tool-modes {
+  flex-basis: 100%;
+  flex-grow: 0;
+  white-space: normal;
+  overflow: visible;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.tool-row-off .tool-modes { color: var(--text-muted); }
+
+.tools-menu-foot {
+  padding: var(--space-2) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--border-subtle);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.tools-empty { padding: var(--space-6) var(--space-5); color: var(--text-muted); font-size: var(--text-md); text-align: center; }
+
+
+/* ===========================================================================
+ * Diagnostics
+ * ======================================================================== */
+
+.doctor-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-5);
+  font-size: var(--text-md);
+}
+.doctor-summary.all-clear { border-left: 3px solid var(--ok); }
+.doctor-summary.has-warn { border-left: 3px solid var(--warn); }
+.doctor-summary.has-fail { border-left: 3px solid var(--danger); }
+
+.doctor-check {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  align-items: flex-start;
+}
+.doctor-check:last-child { border-bottom: none; }
+
+.doctor-dot { width: var(--space-3); height: var(--space-3); border-radius: 50%; margin-top: 5px; flex: none; }
+.doctor-dot.pass { background: var(--ok); }
+.doctor-dot.warn { background: var(--warn); }
+.doctor-dot.fail { background: var(--danger); }
+
+.doctor-name { font-weight: bold; font-size: var(--text-md); white-space: nowrap; min-width: 150px; }
+.doctor-detail { color: var(--text-secondary); font-size: var(--text-base); flex: 1; min-width: 0; line-height: 1.5; }
+
+/* The fix is the reason to read a health report at all, so it gets the accent
+ * treatment rather than being another grey line. */
+.doctor-fix {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--warn-bg);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-sm);
+  color: var(--warn-text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.doctor-fix code { background: transparent; color: var(--warn-soft); padding: 0; }
+
+/* ===========================================================================
+ * Utilities — these replace inline style attributes
+ * ======================================================================== */
+
+.t-xs { font-size: var(--text-xs); }
+.t-sm { font-size: var(--text-sm); }
+.t-base { font-size: var(--text-base); }
+.t-md { font-size: var(--text-md); }
+.t-lg { font-size: var(--text-lg); }
+.t-bold { font-weight: bold; }
+.t-mono { font-family: var(--font-mono); }
+
+.c-primary { color: var(--text-primary); }
+.c-secondary { color: var(--text-secondary); }
+.c-muted { color: var(--text-muted); }
+.c-faint { color: var(--text-faint); }
+.c-accent { color: var(--accent); }
+.c-ok { color: var(--ok); }
+.c-warn { color: var(--warn); }
+.c-danger { color: var(--danger); }
+
+.row { display: flex; align-items: center; }
+.row-between { display: flex; align-items: center; justify-content: space-between; }
+.col { display: flex; flex-direction: column; }
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.gap-5 { gap: var(--space-5); }
+.grow { flex: 1; min-width: 0; }
+.wrap { flex-wrap: wrap; }
+
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mb-3 { margin-bottom: var(--space-3); }
+.mb-4 { margin-bottom: var(--space-4); }
+
+.hidden { display: none !important; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
