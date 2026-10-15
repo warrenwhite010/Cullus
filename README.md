@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/33509563/README.md)
 # Cullus 🤖
 
 A local AI assistant that runs entirely on your machine. `cullus` starts a web
